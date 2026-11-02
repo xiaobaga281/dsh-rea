@@ -1,0 +1,9 @@
+{
+  "meta": {
+    "title": "Reverse Engineering Tools",
+    "description": "Adds a complete reverse-engineering toolset to Harness, with first-run runtime unpacking, 207 analysis tools, environment checks and an engine preparation sidebar."
+  },
+  "tool.rea_doctor": "Run the reverse-engineering service readiness check and report the connection, server state and provider inventory as JSON.",
+  "skill.reverse-engineer-anything": "How to investigate a shipped binary, package, ASAR, APK, or browser target and report evidence."
+}
+

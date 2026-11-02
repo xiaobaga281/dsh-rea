@@ -1,0 +1,8 @@
+{
+  "meta": {
+    "title": "逆向工程工具",
+    "description": "把完整的逆向分析工具接入 Harness：运行时首次启用时解包到 DSH 主目录，207 个分析工具进入 Agent 工具表，并提供环境检查与引擎准备侧栏。"
+  },
+  "tool.rea_doctor": "运行逆向服务就绪检查，以 JSON 报告连接状态、服务端状态与可用的分析引擎清单。",
+  "skill.reverse-engineer-anything": "如何调查随发布的二进制、安装包、ASAR、APK 或浏览器目标，并按证据汇报。"
+}

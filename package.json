@@ -1,0 +1,57 @@
+{
+  "name": "dsh-rea",
+  "version": "1.0.3",
+  "displayName": "逆向分析",
+  "description": "Reverse-engineering tools for DeepSeek Harness: a compressed runtime, deferred 207-tool catalog, environment sidebar, and one-click engine preparation.",
+  "type": "module",
+  "icon": "./icon.svg",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE",
+    "vendor/rea-runtime.tgz",
+    "vendor/rea-runtime.sha256"
+  ],
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": ["@deepseek-ai/dsh-client-locale"]
+    }
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-bundle",
+    "cordis",
+    "plugin",
+    "reverse-engineering",
+    "mcp",
+    "ghidra"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xiaobaga281/dsh-rea.git"
+  },
+  "homepage": "https://github.com/xiaobaga281/dsh-rea#readme",
+  "bugs": {
+    "url": "https://github.com/xiaobaga281/dsh-rea/issues"
+  },
+  "author": "xiaobaga281",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

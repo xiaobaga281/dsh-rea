@@ -1,0 +1,6 @@
+* text=auto eol=lf
+
+# The vendored runtime is a compressed binary; never touch it
+*.tgz binary
+*.zip binary
+*.exe binary

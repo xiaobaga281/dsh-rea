@@ -1,0 +1,13 @@
+# dsh-rea - one Host row.
+#
+# REA (github.com/morluto/rea, npm package rea-agents, MIT) is bridged into the
+# Harness by this package's own Host entry: on first activation the compressed
+# runtime under vendor/ is unpacked into the DSH home, and the REA MCP server is
+# then spawned with the profile's own node. Every REA tool is registered under
+# mcp__rea__<tool>, and the bundled reverse-engineer-anything skill joins the
+# skill catalog.
+
+- insert:
+    - id: rea
+      name: 'dsh-rea'
+      config: {}

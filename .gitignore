@@ -1,2 +1,16 @@
+# Dependencies and build output never belong to the source tree
 node_modules/
 dist/
+
+# Release artifacts are produced by `npm pack`; vendor/ is shipped on purpose
+*.tgz
+!vendor/rea-runtime.tgz
+*.zip
+
+# Local caches and logs
+.npm-cache/
+*.log
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
