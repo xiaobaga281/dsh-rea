@@ -16,7 +16,7 @@ window.__ModuleLoader__.load({
         configured: '已发现', cached: '插件缓存',         install: '准备 Ghidra', installing: '下载并解包中…',         installHint: '首次准备需要下载约 543 MB，校验后解包到 DSH 主目录。',
         download: '下载', extract: '解包', path: '路径',         external: '其他外部工具', jadx: 'JADX', apktool: 'Apktool', wabt: 'WABT', rizin: 'Kuna/Rizin',
         configuredYes: '已配置', configuredNo: '未配置', nativeHint: 'Ghidra 只在真正调用 native 函数分析时使用。',
-        noNetwork: '下载需要网络；失败时不会修改已有安装。', pathConfig: '外部工具路径', save: '保存路径', saved: '已保存', pathPlaceholder: '绝对路径（可留空）', prepareTool: '准备', cannotPrepare: '无自动安装包，请填写路径。', manualRizin: 'Kuna/Rizin 需要你自行安装，在下方填写可执行文件的绝对路径。',
+        noNetwork: '下载需要网络；失败时不会修改已有安装。', pathConfig: '外部工具路径', save: '保存路径', saved: '已保存', pathPlaceholder: '绝对路径（可留空）', prepareTool: '准备', cannotPrepare: '无自动安装包，请填写路径。', manualRizin: 'Kuna/Rizin 需要你自行安装，在下方填写可执行文件的绝对路径。', updateTitle: '版本更新', updateCurrent: '当前版本', updateLatest: '最新版本', checkUpdate: '检查更新', checkingUpdate: '检查中…', upToDate: '已是最新版本', updateAvailable: '有新版本可下载', installUpdate: '下载并安装', installingUpdate: '下载安装中…', updateRestart: '安装完成，重启会话后生效。', updateSource: '来源', updateMirror: '镜像',
       },
       en: {
         title: 'Reverse Engineering', subtitle: 'Environment and engines', refresh: 'Refresh', loading: 'Reading environment…',
@@ -27,7 +27,7 @@ window.__ModuleLoader__.load({
         configured: 'Detected', cached: 'Plugin cache',         install: 'Prepare Ghidra', installing: 'Downloading and extracting…',         installHint: 'First preparation downloads about 543 MB and extracts it into the DSH home.',
         download: 'Download', extract: 'Extract', path: 'Path',         external: 'Other external tools', jadx: 'JADX', apktool: 'Apktool', wabt: 'WABT', rizin: 'Kuna/Rizin',
         configuredYes: 'Configured', configuredNo: 'Not configured', nativeHint: 'Ghidra is used only when a native function analysis is actually called.',
-        noNetwork: 'Downloading requires network access; an existing installation is not changed on failure.', pathConfig: 'External tool paths', save: 'Save paths', saved: 'Saved', pathPlaceholder: 'Absolute path (optional)', prepareTool: 'Prepare', cannotPrepare: 'No automatic package; enter a path.', manualRizin: 'Kuna/Rizin must be installed by you; enter the absolute path below.',
+        noNetwork: 'Downloading requires network access; an existing installation is not changed on failure.', pathConfig: 'External tool paths', save: 'Save paths', saved: 'Saved', pathPlaceholder: 'Absolute path (optional)', prepareTool: 'Prepare', cannotPrepare: 'No automatic package; enter a path.', manualRizin: 'Kuna/Rizin must be installed by you; enter the absolute path below.', updateTitle: 'Updates', updateCurrent: 'Installed', updateLatest: 'Latest', checkUpdate: 'Check for updates', checkingUpdate: 'Checking…', upToDate: 'Up to date', updateAvailable: 'Update available', installUpdate: 'Download and install', installingUpdate: 'Downloading…', updateRestart: 'Installed. Restart the session to load it.', updateSource: 'Source', updateMirror: 'Mirror',
       },
     };
     function api(path) { const u = new URL(path, document.baseURI); u.hash = ''; return u.pathname + u.search; }
@@ -35,6 +35,8 @@ window.__ModuleLoader__.load({
     async function installGhidra() { const r = await fetch(api('/rea/ghidra/install'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); const j = await r.json(); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j; }
     async function saveConfig(paths) { const r = await fetch(api('/rea/engine/config'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(paths) }); const j = await r.json(); if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`); return j; }
     async function installTool(tool) { const r = await fetch(api('/rea/engine/install'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tool }) }); const j = await r.json(); if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`); return j; }
+    async function checkUpdate() { const r = await fetch(api('/rea/update/check'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); const j = await r.json(); if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`); return j; }
+    async function startUpdate() { const r = await fetch(api('/rea/update/install'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); const j = await r.json(); if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`); return j; }
     function lensIcon(size, active) {
       const color = active ? 'var(--dsw-alias-brand-primary)' : 'currentColor';
       const dim = size || 20;
@@ -74,6 +76,36 @@ window.__ModuleLoader__.load({
       return h(Section, { title: t('external') },
         h('div', { className: 'rea-external-grid' }, items.map(([key, label]) => h(ExternalCard, { key, keyName: key, label, configured: status.external?.[key], canPrepare: status.externalCanPrepare?.[key], state: status.externalState?.[key], busy, onPrepare, t }))),
         h('p', { className: 'rea-hint', style: { marginLeft: 0 } }, t('manualRizin')),
+      );
+    }
+    function UpdateSection({ t, status, busy, onCheck, onInstall }) {
+      const update = status?.update ?? {};
+      const phase = update.phase ?? 'idle';
+      const working = phase === 'checking' || phase === 'downloading' || phase === 'extracting' || phase === 'installing';
+      const pct = update.total > 0 ? Math.min(100, Math.round(update.bytes / update.total * 100)) : 0;
+      const state = update.restartRequired ? 'ok' : phase === 'error' ? 'error' : update.hasUpdate ? 'busy' : 'ok';
+      const detail = update.restartRequired ? t('updateRestart')
+        : phase === 'error' ? (update.error || t('error'))
+          : update.hasUpdate ? `${t('updateAvailable')} · ${update.latest}`
+            : update.checkedAt ? t('upToDate') : `${t('updateCurrent')} ${update.current || status?.version || '—'}`;
+      return h(Section, { title: t('updateTitle') },
+        h(StatusRow, {
+          label: t('updateCurrent'),
+          state,
+          detail,
+          extra: update.source ? h('span', { className: 'rea-badge' }, update.source) : null,
+          action: h('button', { className: 'rea-config', type: 'button', onClick: onCheck, disabled: busy || working }, working && phase === 'checking' ? t('checkingUpdate') : t('checkUpdate')),
+        }),
+        update.hasUpdate && !update.restartRequired
+          ? h('button', { className: 'rea-primary', type: 'button', onClick: onInstall, disabled: working }, working ? t('installingUpdate') : `${t('installUpdate')} ${update.latest}`)
+          : null,
+        phase === 'downloading'
+          ? h('div', { className: 'rea-progress-wrap' }, h('div', { className: 'rea-progress-label' }, `${update.mirror || t('updateMirror')} · ${pct}%`), h('div', { className: 'rea-progress' }, h('div', { style: { width: `${pct}%` } })))
+          : null,
+        phase === 'extracting' || phase === 'installing' ? h('div', { className: 'rea-progress-label', style: { marginLeft: 0 } }, update.message || t('installingUpdate')) : null,
+        update.hasUpdate && update.releaseUrl && !update.restartRequired
+          ? h('p', { className: 'rea-hint', style: { marginLeft: 0 } }, h('a', { href: update.releaseUrl, target: '_blank', rel: 'noreferrer', style: { color: 'var(--dsw-alias-brand-primary)' } }, `${t('updateLatest')} ${update.latest}`))
+          : null,
       );
     }
     function Panel({ t }) {
@@ -122,10 +154,13 @@ window.__ModuleLoader__.load({
         } catch (e) { setError(String(e?.message || e)); } finally { setBusy(false); }
       };
       const doTool = async (tool) => { setBusy(true); setError(''); try { setStatus(await installTool(tool)); } catch (e) { setError(String(e?.message || e)); } finally { setBusy(false); } };
+      const doCheckUpdate = async () => { setBusy(true); setError(''); try { setStatus(await checkUpdate()); } catch (e) { setError(String(e?.message || e)); } finally { setBusy(false); } };
+      const doInstallUpdate = async () => { setBusy(true); setError(''); try { setStatus(await startUpdate()); } catch (e) { setError(String(e?.message || e)); } finally { setBusy(false); } };
       const pct = gh?.total > 0 ? Math.min(100, Math.round(gh.bytes / gh.total * 100)) : 0;
       return h('div', { className: 'rea-panel' },
         h('div', { className: 'rea-header' }, h('div', { className: 'rea-heading' }, h('div', { className: 'rea-title' }, lensIcon(22, true), h('span', null, t('title'))), h('div', { className: 'rea-subtitle' }, t('subtitle'))), h('button', { className: 'rea-ghost', type: 'button', onClick: () => load(false), disabled: busy }, t('refresh'))),
         error ? h('div', { className: 'rea-alert' }, error) : null,
+        status ? h(UpdateSection, { t, status, busy, onCheck: doCheckUpdate, onInstall: doInstallUpdate }) : null,
         !status ? h('div', { className: 'rea-loading' }, t('loading')) : h(React.Fragment, null,
           h(Section, { title: t('reaRuntime') }, h(StatusRow, { label: t('reaRuntime'), state: status.runtime?.unpacked ? 'ok' : 'warn', detail: status.runtime?.unpacked ? t('runtimeReady') : t('runtimeMissing') })),
           h(Section, { title: t('ghidra') },

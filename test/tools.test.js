@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildCatalogTool, buildTool, RESULT_GUIDANCE, textOf } from '../lib/tools.js';
+import { buildCatalogTool, buildStatusTool, buildTool, RESULT_GUIDANCE, textOf } from '../lib/tools.js';
 
 function catalogOf(entries) {
   return { entries: () => entries };
@@ -97,4 +97,58 @@ test('the result guidance names the real tool identifiers', () => {
   assert.match(RESULT_GUIDANCE, /mcp__rea__inspect_analysis_view/);
   assert.match(RESULT_GUIDANCE, /mcp__rea__export_evidence_bundle/);
   assert.ok(RESULT_GUIDANCE.length < 400, `guidance is ${RESULT_GUIDANCE.length} characters`);
+});
+
+test('a tool name returns that tool\'s input schema, prefixed or not', async () => {
+  const tool = buildCatalogTool(catalogOf([{
+    name: 'mcp__rea__capture_process_scenario',
+    description: 'Run one command under a PTY.',
+    parameters: { type: 'object', required: ['executable'], properties: { executable: { type: 'string' } } },
+  }]));
+  const plain = await tool.execute({ tool: 'capture_process_scenario' });
+  assert.match(plain.text, /Input schema/);
+  assert.match(plain.text, /"executable"/);
+  const prefixed = await tool.execute({ tool: 'mcp__rea__capture_process_scenario' });
+  assert.equal(prefixed.text, plain.text);
+});
+
+test('an unknown tool name is answered, not thrown', async () => {
+  const tool = buildCatalogTool(catalogOf([{ name: 'mcp__rea__a', description: 'a' }]));
+  const { text } = await tool.execute({ tool: 'nope' });
+  assert.match(text, /No REA tool named nope/);
+});
+
+test('a guard refusal short-circuits before the child is called', async () => {
+  let called = false;
+  const client = { callTool: async () => { called = true; return { content: [] }; } };
+  const tool = buildTool(client, { name: 'uninstall_adb_package' }, false, { guard: () => 'blocked by policy' });
+  await assert.rejects(tool.execute({}, {}), /blocked by policy/);
+  assert.equal(called, false);
+});
+
+test('a spill replaces the tool output with the handle', async () => {
+  const client = { callTool: async () => ({ content: [{ type: 'text', text: 'x'.repeat(500) }] }) };
+  const tool = buildTool(client, { name: 'big' }, false, { spill: async (name, text) => `SPILLED ${name} ${text.length}` });
+  const value = await tool.execute({}, {});
+  assert.equal(value.text, 'SPILLED big 500');
+});
+
+test('rea_status says what is missing instead of failing on an empty session', async () => {
+  const client = { callTool: async () => ({ content: [{ type: 'text', text: JSON.stringify({ result: { open: false } }) }] }) };
+  const tool = buildStatusTool({
+    client,
+    version: '1.2.0',
+    engines: async () => ({
+      runtime: { unpacked: true },
+      java: { fullJdk: false },
+      ghidra: { ready: false },
+      external: {},
+    }),
+  });
+  const { report } = await tool.execute({}, {});
+  assert.match(report, /dsh-rea 1\.2\.0/);
+  assert.match(report, /runtime: unpacked/);
+  assert.match(report, /target: none/);
+  assert.match(report, /open_binary/);
+  assert.match(report, /blocked: .*Ghidra/);
 });

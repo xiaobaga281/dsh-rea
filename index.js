@@ -38,17 +38,19 @@ import { readFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { DESTRUCTIVE_TOOLS, MUTATING_TOOLS, createArtifactStore, sessionArtifactRoot } from './lib/artifacts.js';
 import { childEnvironment, resolveConfig } from './lib/config.js';
 import {
   ENGINE_ENV_OVERRIDES, applyGhidraEnvironment, detectGhidra, engineConfigSignature,
   environmentStatus, installExternalTool, installGhidra, saveEnginePaths,
 } from './lib/engines.js';
 import { ReaMcpClient } from './lib/mcp-client.js';
-import { PLUGIN_ROOT, WORKSPACE_DIR } from './lib/paths.js';
+import { DSH_HOME, PLUGIN_ROOT, WORKSPACE_DIR } from './lib/paths.js';
 import { createToolRegistry } from './lib/registry.js';
 import { mountEnvironmentRoutes } from './lib/routes.js';
 import { installSkill, resolveReaPackage } from './lib/runtime.js';
-import { buildCatalogTool, buildDoctorTool, buildTool, publicToolName, textOf } from './lib/tools.js';
+import { buildCatalogTool, buildDoctorTool, buildReadArtifactTool, buildStatusTool, buildTool, publicToolName, textOf } from './lib/tools.js';
+import { checkForUpdate, configureMirrors, installUpdate, updateStatus } from './lib/update.js';
 
 /** Services this plugin needs; `tools` is the registry REA's catalog lands in. */
 export const inject = ['tools', 'webServer'];
@@ -113,6 +115,32 @@ export async function apply(ctx, rawConfig = {}) {
   })();
   const REA_SKILL_DIR = reaPackage ? join(reaPackage, 'skills', 'reverse-engineer-anything') : undefined;
   config.reaVersion = REA_VERSION;
+  configureMirrors(config.updateMirrors);
+
+  // Results that do not fit the budget are written here and paged on demand;
+  // the same directory carries the audit trail for state-changing calls.
+  const artifacts = createArtifactStore({
+    root: sessionArtifactRoot(join(DSH_HOME, 'rea-artifacts')),
+    maxChars: config.maxResultChars,
+  });
+
+  const statusPayload = async () => ({
+    ...(await environmentStatus()),
+    version: PLUGIN_VERSION,
+    update: updateStatus(PLUGIN_VERSION),
+  });
+
+  /**
+   * Refuse the four operations that remove or overwrite something on a device
+   * unless the row opts in, and record every state-changing call.
+   */
+  const guardTool = (name, args) => {
+    if (DESTRUCTIVE_TOOLS.has(name) && !config.allowDeviceMutations) {
+      return `${name} changes the attached device and is disabled. Set "allowDeviceMutations: true" on the dsh-rea row if that is intended.`;
+    }
+    if (MUTATING_TOOLS.has(name)) void artifacts.audit({ tool: name, args: Object.keys(args ?? {}) });
+    return undefined;
+  };
 
   ctx.effect(() => {
     const dispose = ctx.tools?.register(buildDoctorTool({ config, entry: REA_ENTRY, translate: translator(ctx) }));
@@ -126,6 +154,25 @@ export async function apply(ctx, rawConfig = {}) {
     const dispose = ctx.tools?.register(buildCatalogTool(catalog));
     return () => { try { dispose?.(); } catch {} };
   }, 'dsh-rea: catalog tool');
+
+  ctx.effect(() => {
+    const dispose = ctx.tools?.register(buildReadArtifactTool(artifacts));
+    return () => { try { dispose?.(); } catch {} };
+  }, 'dsh-rea: artifact reader');
+
+  // Declared before the status tool so it can close over the live client: the
+  // tool is advertised from the first turn, while the connection may still be
+  // starting, failing, or being replaced.
+  let client;
+  const clientFacade = {
+    callTool: (...args) => (client === undefined
+      ? Promise.reject(new Error('the REA child is not connected'))
+      : client.callTool(...args)),
+  };
+  ctx.effect(() => {
+    const dispose = ctx.tools?.register(buildStatusTool({ client: clientFacade, engines: statusPayload, version: PLUGIN_VERSION }));
+    return () => { try { dispose?.(); } catch {} };
+  }, 'dsh-rea: status tool');
 
   if (REA_ENTRY === undefined || !config.enabled) {
     log.warn(`dsh-rea: ${REA_ENTRY === undefined ? 'the rea-agents runtime could not be resolved (the archive is missing or failed to unpack)' : 'disabled by config'}; no REA tools registered (rea_doctor still reports the state).`);
@@ -159,7 +206,6 @@ export async function apply(ctx, rawConfig = {}) {
     onError: (message) => log.warn(message),
   });
 
-  let client;
   try {
     client = spawnChild();
     await client.ready;
@@ -180,11 +226,15 @@ export async function apply(ctx, rawConfig = {}) {
     const index = [];
     for (const entry of entries) {
       if (typeof entry?.name !== 'string') continue;
-      const definition = buildTool(client, entry, config.deferCatalog);
+      const definition = buildTool(client, entry, config.deferCatalog, {
+        spill: (name, text) => artifacts.maybeSpill(name, text),
+        guard: (name, args) => guardTool(name, args),
+      });
       definitions.push(definition);
       index.push({
         name: definition.name,
         description: typeof entry.description === 'string' ? entry.description : entry.name,
+        parameters: definition.parameters,
       });
     }
     // The index is swapped only after the definitions exist, so a failed
@@ -238,7 +288,9 @@ export async function apply(ctx, rawConfig = {}) {
 
   if (ctx.webServer?.register) {
     const routeDispose = mountEnvironmentRoutes(ctx, {
-      status: environmentStatus,
+      status: statusPayload,
+      checkUpdate: () => checkForUpdate(log, { current: PLUGIN_VERSION }),
+      installUpdate: () => installUpdate(log),
       installGhidra: async () => {
         const detected = await installGhidra(log);
         applyGhidraEnvironment(detected);

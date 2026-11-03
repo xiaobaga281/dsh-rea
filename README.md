@@ -10,6 +10,10 @@ REA（[github.com/morluto/rea](https://github.com/morluto/rea)，npm 包 `rea-ag
 - **技能**：把 REA 自带的 `reverse-engineer-anything` 技能及其 `references/` 参考文档安装到 `~/.dsh/skills/reverse-engineer-anything/`，按 REA 版本号打戳，版本没变就不重拷。
 - **环境侧栏**：侧栏入口显示运行时、Java/JDK、Ghidra、JADX、Apktool、WABT、Kuna/Rizin 的实际状态；面板内可填写并保存所有绝对路径，Ghidra/JADX/Apktool/WABT 还提供按需准备按钮和进度。
 - **就绪检查**：`rea_doctor` 运行逆向服务自己的 `mcp doctor --json`，报告 MCP 子进程能否启动、服务端状态与可用分析引擎。只读，不打开任何目标。
+- **一屏状态**：`rea_status` 用一次调用说清"有没有打开目标、绑了哪个 provider、哪些引擎装好了、因此现在能做什么"。207 个工具里有 55 个依赖"当前文档"，在 headless 引擎下没有目标就会空转——先看一眼比撞一次墙便宜。
+- **结果落盘**：单次结果超过 `maxResultChars`（默认 24 000 字符）时写入 `~/.dsh/rea-artifacts/<会话>/`，模型拿到开头摘要和路径，再用 `rea_read_artifact` 分页读。`binary_session` 这类 70 KB 的结果不再挤爆一轮对话。
+- **变更留痕**：会改目标/设备/调试会话的调用写入 `audit.jsonl`；`uninstall_adb_package`、`install_adb_package`、`push_adb_file`、`stop_adb_app` 四个破坏性操作默认关闭，需要显式打开 `allowDeviceMutations`。
+- **版本更新**：侧栏「版本更新」可检查 GitHub 上的新版本并一键下载安装；下载走多层镜像（GitHub 直连 → 多个公共代理），任一镜像失效自动换下一个，归档按 Release 公布的 SHA-256 校验后才替换。
 
 ## 为什么不合并工具
 
@@ -83,6 +87,27 @@ Java 探测会枚举 `JAVA_HOME`、各发行版的安装目录（`C:\Program Fil
 | `logLevel` | `info` | 子进程日志级别。 |
 | `deferCatalog` | `true` | 把 207 个 REA 工具的 schema 延迟加载（不进入请求体）。置 `false` 恢复成全部常驻广告——只在确实需要模型直接看见全部 schema 时才这么干，代价是每请求多约 4.8 万 token。 |
 | `enabled` | `true` | 置 `false` 时不派生子进程、不注册工具。 |
+| `maxResultChars` | `24000` | 单次工具结果的字符预算（4000–200000）。超出部分落盘，返回摘要 + 路径，用 `rea_read_artifact` 分页。 |
+| `allowDeviceMutations` | `false` | 是否允许 `uninstall_adb_package`、`install_adb_package`、`push_adb_file`、`stop_adb_app` 这四个会删改设备的操作。 |
+| `updateMirrors` | `[]` | 额外追加的下载镜像前缀（如 `https://your-mirror/`），会排在自带镜像之后，不会替换官方直连。 |
+
+## 版本更新
+
+侧栏顶部的「版本更新」会查 `api.github.com` 的最新 Release，与本地版本比较；有新版时显示版本号、来源与 Release 链接，点「下载并安装」后：
+
+1. **元数据**先取 GitHub REST API；取不到时退回仓库里的 `update.json`（经 jsDelivr / raw 两个 CDN）。任一层可用就能知道最新版本与归档摘要。
+2. **字节**按顺序尝试 GitHub 直连 → `ghproxy.net` → `gh-proxy.com` → `ghfast.top` → `hub.gitmirror.com` → `github.moeyy.xyz`。某个镜像超时、限流或返回错误页，就换下一个；同一个镜像内部还会重试一次。
+3. 下载完成后**先校验 SHA-256**（取自 Release 说明里的 `sha256:` 行或 `update.json`），不匹配直接删除并换镜像。
+4. 校验通过才解包、核对包内 `package.json` 的版本，然后把当前插件目录改名为 `.bak-<时间戳>`，把新目录换进去；换入失败会把旧目录改回来。
+5. 安装完成后提示重启会话——新代码在下次加载时生效。
+
+镜像只被当作传输通道，完整性由摘要决定；但摘要与归档若同时被替换则无法发现（这里没有签名密钥），所以 `update.json` 固定在本仓库。
+
+**发布新版本时的顺序**：`npm test` → `npm run pack` → `npm run manifest`（用实际打包产物重写 `update.json` 的版本、大小与摘要）→ 发 Release（说明里带上 `sha256:` 行）→ 提交 `update.json`。少写一步，只用镜像的用户就会看到旧的“最新版本”。
+
+## 代理
+
+下载与更新检查会读取 `HTTPS_PROXY` / `HTTP_PROXY`（含 `NO_PROXY`），通过 CONNECT 隧道走代理。Node 自己不认识这些变量，而很多本机代理只设置了系统代理，所以这一层是必要的；`localhost` / `127.0.0.1` 永远直连。
 
 ## 安全边界
 
@@ -110,19 +135,22 @@ lib/config.js       配置归一化、子进程环境
 lib/tools.js        工具桥、rea_catalog、rea_doctor
 lib/registry.js     工具表增量同步（失败只影响单个工具）
 lib/routes.js       HTTP 路由与来源校验
+lib/artifacts.js    结果落盘、分页读取、变更审计
+lib/update.js       版本检查、多镜像下载、目录替换
+scripts/update-manifest.mjs  生成 update.json（发布用）
 ```
 
 ## 测试
 
 ```bash
-npm test          # node --test，49 个用例
+npm test          # node --test，71 个用例
 ```
 
-覆盖最容易回归的五处：公开名映射（长度/字符集/哈希）、行分帧（任意分块/CRLF/超长行）、配置归一化与子进程环境、工具表增量同步（含单工具失败回落）、路由来源校验。
+覆盖最容易回归的几处：公开名映射（长度/字符集/哈希）、行分帧（任意分块/CRLF/超长行）、配置归一化与子进程环境、工具表增量同步（含单工具失败回落）、路由来源校验、结果落盘与分页边界、版本比较与镜像顺序。
 
 ## 安装
 
-把 `dsh-rea-1.1.0.tgz` 解压到稳定目录（如 `~/.dsh/plugins/dsh-rea`），通过 Plugin Manager 的 `install_bundle` 选择该目录，或直接把本包加进 profile 的 `dependencies` 与 `bundles`：
+把 `dsh-rea-1.2.0.tgz` 解压到稳定目录（如 `~/.dsh/plugins/dsh-rea`），通过 Plugin Manager 的 `install_bundle` 选择该目录，或直接把本包加进 profile 的 `dependencies` 与 `bundles`：
 
 ```
 "dsh-rea": "link:<包目录的绝对路径>"
@@ -133,7 +161,7 @@ npm test          # node --test，49 个用例
 ## 发布包
 
 ```bash
-npm test && npm run pack   # → dist/dsh-rea-1.1.0.tgz（package/ 为根）
+npm test && npm run pack   # → dist/dsh-rea-1.2.0.tgz（package/ 为根）
 ```
 
 包内含 `index.js`、`client.js`、`lib/`、`cordis.patch.yml`、`locale/`、`icon.svg`、`README.md`、`LICENSE`，以及 `vendor/rea-runtime.tgz`（28 MB，136 个包的完整依赖闭包）与它的 SHA-256。`test/` 不进发布包。

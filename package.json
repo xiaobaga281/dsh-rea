@@ -1,6 +1,6 @@
 {
   "name": "dsh-rea",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "displayName": "逆向分析",
   "description": "Reverse-engineering tools for DeepSeek Harness: a compressed runtime, deferred 207-tool catalog, environment sidebar, and one-click engine preparation.",
   "type": "module",
@@ -26,14 +26,19 @@
   ],
   "scripts": {
     "test": "node --test",
-    "pack": "npm pack --pack-destination dist"
+    "pack": "npm pack --pack-destination dist",
+    "manifest": "node scripts/update-manifest.mjs"
   },
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "immediately": true,
-      "inject": ["@deepseek-ai/dsh-client-locale"]
+      "inject": [
+        "@deepseek-ai/dsh-client-locale"
+      ]
     }
   },
   "keywords": [
