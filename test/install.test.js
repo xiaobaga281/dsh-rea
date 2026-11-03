@@ -144,3 +144,66 @@ test('an install without a published digest is refused outright', async () => {
     await rm(workdir, { recursive: true, force: true });
   }
 });
+
+test('a pinned digest that disagrees with the release is refused before any download', async () => {
+  const workdir = await mkdtemp(join(tmpdir(), 'dsh-rea-pin-'));
+  try {
+    const target = join(workdir, 'plugin');
+    await writePackage(target, '1.0.0', 'old');
+    UPDATE_STATE.current = '1.0.0';
+    UPDATE_STATE.latest = '2.0.0';
+    UPDATE_STATE.asset = { name: 'dsh-rea-2.0.0.tgz', size: 0, url: 'http://127.0.0.1:9/never.tgz', sha256: 'a'.repeat(64) };
+    UPDATE_STATE.mirrors = LOCAL_MIRROR;
+    const state = await installUpdate(null, { target, pinnedSha256: 'b'.repeat(64) });
+    assert.equal(state.phase, 'error');
+    assert.match(state.error, /pins|refusing/i);
+    const manifest = JSON.parse(await readFile(join(target, 'package.json'), 'utf8'));
+    assert.equal(manifest.version, '1.0.0');
+  } finally {
+    await rm(workdir, { recursive: true, force: true });
+  }
+});
+
+test('a pinned digest that matches still requires the bytes to match', async () => {
+  const workdir = await mkdtemp(join(tmpdir(), 'dsh-rea-pin-bytes-'));
+  let close;
+  try {
+    const target = join(workdir, 'plugin');
+    await writePackage(target, '1.0.0', 'old');
+    await writePackage(join(workdir, 'stage', 'package'), '2.0.0', 'new');
+    const archive = packInto(workdir, 'stage', 'dsh-rea-2.0.0.tgz');
+    const digest = createHash('sha256').update(await readFile(archive)).digest('hex');
+    const server = await serveFile(archive);
+    close = server.close;
+    UPDATE_STATE.current = '1.0.0';
+    UPDATE_STATE.latest = '2.0.0';
+    UPDATE_STATE.asset = { name: 'dsh-rea-2.0.0.tgz', size: 0, url: server.url, sha256: digest };
+    UPDATE_STATE.mirrors = LOCAL_MIRROR;
+    const state = await installUpdate(null, { target, pinnedSha256: digest.toUpperCase() });
+    assert.equal(state.phase, 'restart-required', state.error ?? '');
+    assert.equal(state.pinnedSha256, digest);
+    assert.ok(state.mirrorAttempts.some((attempt) => attempt.ok === true));
+  } finally {
+    if (close) await close();
+    await rm(workdir, { recursive: true, force: true });
+  }
+});
+
+test('a failed mirror is recorded so the sidebar can show why', async () => {
+  const workdir = await mkdtemp(join(tmpdir(), 'dsh-rea-mirror-log-'));
+  try {
+    const target = join(workdir, 'plugin');
+    await writePackage(target, '1.0.0', 'old');
+    UPDATE_STATE.current = '1.0.0';
+    UPDATE_STATE.latest = '2.0.0';
+    UPDATE_STATE.asset = { name: 'x.tgz', size: 0, url: 'http://127.0.0.1:9/never.tgz', sha256: 'f'.repeat(64) };
+    UPDATE_STATE.mirrors = LOCAL_MIRROR;
+    const state = await installUpdate(null, { target });
+    assert.equal(state.phase, 'error');
+    assert.equal(state.mirrorAttempts.length, 1);
+    assert.equal(state.mirrorAttempts[0].ok, false);
+    assert.ok(state.mirrorAttempts[0].reason.length > 0);
+  } finally {
+    await rm(workdir, { recursive: true, force: true });
+  }
+});

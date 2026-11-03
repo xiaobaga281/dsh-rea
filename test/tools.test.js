@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildCatalogTool, buildStatusTool, buildTool, RESULT_GUIDANCE, textOf } from '../lib/tools.js';
+import { buildCatalogTool, buildStatusTool, buildTool, guidanceFor, RESULT_GUIDANCE, textOf } from '../lib/tools.js';
 
 function catalogOf(entries) {
   return { entries: () => entries };
@@ -151,4 +151,38 @@ test('rea_status says what is missing instead of failing on an empty session', a
   assert.match(report, /target: none/);
   assert.match(report, /open_binary/);
   assert.match(report, /blocked: .*Ghidra/);
+});
+
+// --- 1.3.0: tiered result guidance ----------------------------------------
+
+test('a decompiler result is explicitly labelled as inference, not source', () => {
+  assert.match(guidanceFor('procedure_pseudo_code'), /inference, not source code/i);
+  assert.match(guidanceFor('batch_decompile'), /inference/i);
+  assert.doesNotMatch(guidanceFor('list_strings'), /inference/i);
+});
+
+test('a state-changing tool is marked as audited', () => {
+  assert.match(guidanceFor('set_comment'), /recorded in the audit trail/i);
+  assert.match(guidanceFor('install_adb_package'), /audit trail/i);
+  assert.equal(guidanceFor('inspect_macho'), '');
+});
+
+test('the rendered result carries the tiered caveat exactly once', () => {
+  const client = { callTool: async () => ({ content: [] }) };
+  const tool = buildTool(client, { name: 'procedure_pseudo_code', description: 'Decompiled C.' }, false);
+  const blocks = tool.output.render({}, { text: 'int main(){}' });
+  assert.match(blocks[0].text, /inference, not source code/);
+  assert.equal(blocks[0].text.match(/inference, not source code/g).length, 1);
+  assert.match(blocks[0].text, /RESULT_GUIDANCE|Evidence ID/);
+});
+
+test('the guard receives the schema entry so new tools can be classified', async () => {
+  const seen = [];
+  const client = { callTool: async () => ({ content: [{ type: 'text', text: 'ok' }] }) };
+  const entry = { name: 'future_write_tool', description: 'Writes state.' };
+  const tool = buildTool(client, entry, false, {
+    guard: (name, _args, schemaEntry) => { seen.push(schemaEntry?.description); return undefined; },
+  });
+  await tool.execute({}, {});
+  assert.deepEqual(seen, ['Writes state.']);
 });

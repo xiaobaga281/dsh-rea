@@ -12,8 +12,12 @@ REA（[github.com/morluto/rea](https://github.com/morluto/rea)，npm 包 `rea-ag
 - **就绪检查**：`rea_doctor` 运行逆向服务自己的 `mcp doctor --json`，报告 MCP 子进程能否启动、服务端状态与可用分析引擎。只读，不打开任何目标。
 - **一屏状态**：`rea_status` 用一次调用说清"有没有打开目标、绑了哪个 provider、哪些引擎装好了、因此现在能做什么"。207 个工具里有 55 个依赖"当前文档"，在 headless 引擎下没有目标就会空转——先看一眼比撞一次墙便宜。
 - **结果落盘**：单次结果超过 `maxResultChars`（默认 24 000 字符）时写入 `~/.dsh/rea-artifacts/<会话>/`，模型拿到开头摘要和路径，再用 `rea_read_artifact` 分页读。`binary_session` 这类 70 KB 的结果不再挤爆一轮对话。
-- **变更留痕**：会改目标/设备/调试会话的调用写入 `audit.jsonl`；`uninstall_adb_package`、`install_adb_package`、`push_adb_file`、`stop_adb_app` 四个破坏性操作默认关闭，需要显式打开 `allowDeviceMutations`。
-- **版本更新**：侧栏「版本更新」可检查 GitHub 上的新版本并一键下载安装；下载走多层镜像（GitHub 直连 → 多个公共代理），任一镜像失效自动换下一个，归档按 Release 公布的 SHA-256 校验后才替换。
+- **变更留痕（1.3.0 起 fail-closed）**：不再靠硬编码名单——已知只读首词之外的**新工具默认审计**，名字含明确写动词的也会审计（补上了原先漏掉的 `instrument_with_frida`、`execute_rizin_command`）。真实工具面上 207 个里 41 个审计、162 个只读。改设备/删除/覆盖的 4 个操作默认关闭，需要 `allowDeviceMutations`。
+- **静态对抗初筛**：`rea_triage(path)` 纯本地、不执行样本：整体与分块熵、PE/ELF/Mach-O 节区与入口/导入异常、13 类壳与混淆器签名、字符串与单字节 XOR 探测、可选 YARA，输出带证据的 packed / obfuscated / unpacked 判定与下一步建议。
+- **证据出口**：`rea_export_report` 把 Evidence bundle 转成 Markdown 报告与 SARIF 2.1.0，覆盖度、未解未知清单、推断边界都写进产物，可归档或接 CI。
+- **产物治理**：结果默认保留 7 天并有容量上限；`sensitiveArtifacts` 让完整结果只回摘要、不落盘；`rea_purge_artifacts` 手动清理。
+- **分级提示**：反编译/重建类结果强制标注「推断，非源码」，写操作结果标注「已审计」。
+- **版本更新**：侧栏可检查 GitHub 新版本并一键安装；下载走多层镜像，任一失效自动换下一个，按 Release 公布的 SHA-256 校验（可用 `pinnedSha256` 钉死摘要）。侧栏会列出每个镜像的成功/失败原因与当前安全策略。
 
 ## 为什么不合并工具
 
@@ -88,8 +92,16 @@ Java 探测会枚举 `JAVA_HOME`、各发行版的安装目录（`C:\Program Fil
 | `deferCatalog` | `true` | 把 207 个 REA 工具的 schema 延迟加载（不进入请求体）。置 `false` 恢复成全部常驻广告——只在确实需要模型直接看见全部 schema 时才这么干，代价是每请求多约 4.8 万 token。 |
 | `enabled` | `true` | 置 `false` 时不派生子进程、不注册工具。 |
 | `maxResultChars` | `24000` | 单次工具结果的字符预算（4000–200000）。超出部分落盘，返回摘要 + 路径，用 `rea_read_artifact` 分页。 |
-| `allowDeviceMutations` | `false` | 是否允许 `uninstall_adb_package`、`install_adb_package`、`push_adb_file`、`stop_adb_app` 这四个会删改设备的操作。 |
-| `updateMirrors` | `[]` | 额外追加的下载镜像前缀（如 `https://your-mirror/`），会排在自带镜像之后，不会替换官方直连。 |
+| `allowDeviceMutations` | `false` | 是否允许 4 个会删改设备的操作。1.3.0 起破坏性操作按名字推断（`uninstall`/`remove`/`delete`/`kill`/`wipe`/`overwrite`/`push`/`install`/`stop` + 设备名词），上游新增的同类工具也会自动被拦。 |
+| `allowedTargets` | `[]` | 会话级授权根目录。非空时，工具参数里任何绝对路径都必须落在这些根下，否则拒绝。空 = 不限制。 |
+| `sensitiveArtifacts` | `false` | 开启后超大结果只返回摘要，**完整内容不写磁盘**（`rea_read_artifact` 无法分页，这是刻意的取舍）。 |
+| `artifactRetentionDays` | `7` | 旧会话产物保留天数（1–365），激活时自动清理。 |
+| `artifactMaxBytes` | `268435456` | 旧会话产物总容量上限（字节），超出按最旧删除。 |
+| `triageMaxBytes` | `67108864` | `rea_triage` 单次读取上限（1 MB–512 MB），超出部分截断并标注。 |
+| `yaraRulesDir` | 空 | 可选，指向含 `.yar`/`.yara` 的目录；未安装 `yara` 或未配置时报告跳过，不算失败。 |
+| `pinnedSha256` | 空 | 64 位十六进制摘要。设置后，Release 公布的摘要与它不符就拒绝安装（下载前），下载字节也按它校验。 |
+| `maxBackups` | `2` | 自更新保留的 `.bak-*` 份数（0–10），避免每次更新累积 30 MB 备份。 |
+| `updateMirrors` | `[]` | 额外追加的下载镜像前缀，排在自带镜像之后，不会替换官方直连。 |
 
 ## 版本更新
 
@@ -101,7 +113,7 @@ Java 探测会枚举 `JAVA_HOME`、各发行版的安装目录（`C:\Program Fil
 4. 校验通过才解包、核对包内 `package.json` 的版本，然后把当前插件目录改名为 `.bak-<时间戳>`，把新目录换进去；换入失败会把旧目录改回来。
 5. 安装完成后提示重启会话——新代码在下次加载时生效。
 
-镜像只被当作传输通道，完整性由摘要决定；但摘要与归档若同时被替换则无法发现（这里没有签名密钥），所以 `update.json` 固定在本仓库。
+镜像只被当作传输通道，完整性由摘要决定；但摘要与归档**同源**（都来自同一个 GitHub 账号），账号被篡改时校验形同虚设。需要独立保证时设置 `pinnedSha256`：它来自本地配置，与 Release 公布的摘要不一致会在下载前直接拒绝。侧栏会逐条显示每个镜像的成功或失败原因、当前钉死的摘要、保留的备份数，以及「安全策略」板块（授权范围 / 设备写操作 / 敏感产物 / 保留期）。
 
 **发布新版本时的顺序**：`npm test` → `npm run pack` → `npm run manifest`（用实际打包产物重写 `update.json` 的版本、大小与摘要）→ 发 Release（说明里带上 `sha256:` 行）→ 提交 `update.json`。少写一步，只用镜像的用户就会看到旧的“最新版本”。
 
@@ -132,25 +144,28 @@ lib/mcp-client.js   stdio JSON-RPC 客户端 + 行分帧
 lib/runtime.js      运行时校验、原子解包、技能安装
 lib/engines.js      Java/Ghidra/JADX/Apktool/WABT 探测与安装
 lib/config.js       配置归一化、子进程环境
-lib/tools.js        工具桥、rea_catalog、rea_doctor
+lib/tools.js        工具桥、rea_catalog、rea_doctor、rea_status、分级提示
 lib/registry.js     工具表增量同步（失败只影响单个工具）
 lib/routes.js       HTTP 路由与来源校验
-lib/artifacts.js    结果落盘、分页读取、变更审计
-lib/update.js       版本检查、多镜像下载、目录替换
+lib/artifacts.js    结果落盘/分页、fail-closed 变更分类、会话范围、保留期
+lib/triage.js       纯本地静态对抗初筛（熵/节区/签名/字符串/XOR/YARA）
+lib/export.js       Evidence bundle → Markdown / SARIF 2.1.0
+lib/analysis-tools.js  rea_triage / rea_export_report / rea_purge_artifacts
+lib/update.js       版本检查、多镜像下载、钉死摘要、目录替换
 scripts/update-manifest.mjs  生成 update.json（发布用）
 ```
 
 ## 测试
 
 ```bash
-npm test          # node --test，71 个用例
+npm test          # node --test，118 个用例
 ```
 
-覆盖最容易回归的几处：公开名映射（长度/字符集/哈希）、行分帧（任意分块/CRLF/超长行）、配置归一化与子进程环境、工具表增量同步（含单工具失败回落）、路由来源校验、结果落盘与分页边界、版本比较与镜像顺序。
+覆盖：公开名映射、行分帧、配置归一化与子进程环境、工具表增量同步、路由来源校验、结果落盘与分页边界、版本比较与镜像顺序；1.3.0 新增熵与 PE 解析、壳签名、XOR 探测、Markdown/SARIF 出口、fail-closed 分类与会话范围、保留期与敏感模式、钉死摘要端到端（含 7 个真实安装用例）、分级提示。
 
 ## 安装
 
-把 `dsh-rea-1.2.0.tgz` 解压到稳定目录（如 `~/.dsh/plugins/dsh-rea`），通过 Plugin Manager 的 `install_bundle` 选择该目录，或直接把本包加进 profile 的 `dependencies` 与 `bundles`：
+把 `dsh-rea-1.3.0.tgz` 解压到稳定目录（如 `~/.dsh/plugins/dsh-rea`），通过 Plugin Manager 的 `install_bundle` 选择该目录，或直接把本包加进 profile 的 `dependencies` 与 `bundles`：
 
 ```
 "dsh-rea": "link:<包目录的绝对路径>"
@@ -161,7 +176,7 @@ npm test          # node --test，71 个用例
 ## 发布包
 
 ```bash
-npm test && npm run pack   # → dist/dsh-rea-1.2.0.tgz（package/ 为根）
+npm test && npm run pack   # → dist/dsh-rea-1.3.0.tgz（package/ 为根）
 ```
 
 包内含 `index.js`、`client.js`、`lib/`、`cordis.patch.yml`、`locale/`、`icon.svg`、`README.md`、`LICENSE`，以及 `vendor/rea-runtime.tgz`（28 MB，136 个包的完整依赖闭包）与它的 SHA-256。`test/` 不进发布包。

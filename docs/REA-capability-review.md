@@ -222,3 +222,24 @@
 **它是一个"把证据管好"的静态分析工作台；制品解析接近商业水准，动态偏 Linux/macOS 且 Windows 为空白，自动化与对抗是明显洼地。** 1.2.0 把插件从"桥接"提升为"治理层"，修掉了上下文、空转、误操作这三类可量化的失败，但没有增加一个分析能力。
 
 下一步最划算的投入仍然是三件事：**加壳与协议的前置处理（P0-1/2，零引擎依赖）、脚本化编排（P1-7，把 300 次往返压成 1 次）、证据库与出口（P1-8 / P0-2，让分析可复用、可交付）**——三件都在插件层，不动 REA 就能拿到大部分收益；同时必须补上 1.2.0 自更新带来的供应链与产物驻留风险。
+
+---
+
+## 附录 · 1.3.0 落地状态（2026-11-03）
+
+本节记录第八节 P0 六项的实际落地情况，避免文档与代码脱节。全部改动都在插件层，未改 REA。
+
+| P0 项 | 状态 | 实现 |
+| --- | --- | --- |
+| 1 静态对抗初筛 | ✅ | `lib/triage.js` + `rea_triage`：纯本地、不执行样本。整体/分块熵、PE/ELF/Mach-O 节区与入口/导入异常、13 类壳与混淆器签名、字符串（ASCII/UTF-16LE）、单字节 XOR 探测、可选 YARA（未安装则跳过）。输出带证据的 verdict / confidence / reasons / nextSteps / limitations。 |
+| 2 证据出口 | ✅ | `lib/export.js` + `rea_export_report`：Evidence bundle → Markdown + SARIF 2.1.0，含覆盖度、未解未知、推断边界；可从内联对象、本地 JSON 或直接调 `export_evidence_bundle` 获取。 |
+| 3 闸门去硬编码 | ✅ | `classifyTool` 改为「已知只读首词 + 明确写动词 + 全新首词 fail-closed + 描述声明」四路判定；`allowedTargets` 提供会话级路径白名单。真实工具面校验：207 个中 4 个破坏性、41 个审计（补上了原先漏掉的 `instrument_with_frida`、`execute_rizin_command`）、162 个只读，无误拦。 |
+| 4 产物治理 | ✅ | 默认 7 天保留期 + 256 MB 容量上限，激活时自动清理；`rea_purge_artifacts` 手动清理且只删本插件的会话目录；`sensitiveArtifacts` 让完整结果只回摘要、不落盘。 |
+| 5 自更新加固 | ✅ | `pinnedSha256`（与 Release 摘要不符在下载前拒绝，字节也按它校验）、`maxBackups` 默认 2、`mirrorAttempts` 逐镜像结果在侧栏可见、「安全策略」板块展示当前策略。 |
+| 6 分级提示 | ✅ | `guidanceFor`：反编译/重建类强制标注「推断，非源码」，写操作标注「已审计」，其余保持两句通用提示。 |
+
+**顺带修掉的一个真实缺陷**：`installUpdate` / `checkForUpdate` 的共享 promise 在「首个 await 之前就失败」的路径上永远不清空（内层 `finally` 先于外层赋值执行），导致后续所有安装直接返回第一次失败的结果。已改为在返回的 promise 链上清空，并补了端到端用例覆盖。
+
+**未做（P1/P2）**：playbook 沙箱、语料模式与 SQLite 结果库、原生版本差分、tshark TLS 解密与流重组、cdb/TTD Windows 调试桥、angr/Qiling 仿真脱壳、BSim 相似度、反调试对抗、fuzz harness、IDA 接入。这些要么需要新增引擎，要么需要新的子进程隔离边界，不属于本轮「降成本与风险」的范围。
+
+**仍未消除的风险**：单函数粒度与全程序图属 REA 引擎层，插件改不动；自更新的摘要与归档仍同源（`pinnedSha256` 只是把信任锚移到本地配置，不是签名）；反编译产物进入模型上下文的数据外泄问题，只能靠 `sensitiveArtifacts` + 本地模型策略缓解。

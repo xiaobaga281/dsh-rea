@@ -76,3 +76,87 @@ test('destructive tools are a subset of the audited ones', () => {
   assert.ok(DESTRUCTIVE_TOOLS.has('uninstall_adb_package'));
   assert.equal(DESTRUCTIVE_TOOLS.has('set_comment'), false);
 });
+
+// --- 1.3.0: fail-closed classification, session scope, retention ----------
+
+test('a tool added by a future REA release is audited by default, not silently ignored', async () => {
+  const { classifyTool } = await import('../lib/artifacts.js');
+  const unknown = classifyTool('deploy_remote_payload', { description: 'Sends a payload to the target.' });
+  assert.equal(unknown.mutating, true);
+  assert.equal(unknown.inferred, true);
+  assert.equal(classifyTool('list_strings').mutating, false);
+  assert.equal(classifyTool('inspect_macho', { description: 'Read-only inspection.' }).mutating, false);
+});
+
+test('destructive device verbs are inferred from the name, not a hardcoded list', async () => {
+  const { classifyTool } = await import('../lib/artifacts.js');
+  assert.equal(classifyTool('uninstall_adb_package').destructive, true);
+  assert.equal(classifyTool('delete_device_file').destructive, true);
+  assert.equal(classifyTool('push_adb_file').destructive, true);
+  assert.equal(classifyTool('set_comment').destructive, false);
+  assert.equal(classifyTool('record_unknown').destructive, false);
+});
+
+test('an explicit read-only declaration overrides a write-looking verb', async () => {
+  const { classifyTool } = await import('../lib/artifacts.js');
+  assert.equal(classifyTool('set_view_mode', { description: 'Read-only. Does not change any state.' }).mutating, false);
+});
+
+test('session scope rejects paths outside the allowed roots and allows those inside', async () => {
+  const { pathOutsideScope } = await import('../lib/artifacts.js');
+  const roots = [join(tmpdir(), 'allowed')];
+  assert.equal(pathOutsideScope({ path: join(tmpdir(), 'allowed', 'a.exe') }, roots), null);
+  assert.equal(pathOutsideScope({ path: join(tmpdir(), 'elsewhere', 'a.exe') }, roots).key, 'path');
+  assert.equal(pathOutsideScope({ path: 'C:/Windows/system32/cmd.exe' }, roots).key, 'path');
+  assert.equal(pathOutsideScope({ path: '/anything' }, []), null);
+  assert.equal(pathOutsideScope({}, roots), null);
+});
+
+test('sensitive mode never writes the full result to disk', async () => {
+  await withStore({ maxChars: 20, headChars: 10, sensitive: true }, async (store, root) => {
+    const replacement = await store.maybeSpill('binary_session', 'S'.repeat(500));
+    assert.match(replacement, /NOT written to disk/);
+    assert.match(replacement, /cannot be paged/);
+  });
+});
+
+test('sensitive mode writes no artifact file at all', async () => {
+  const { readdir } = await import('node:fs/promises');
+  await withStore({ maxChars: 20, headChars: 10, sensitive: true }, async (store, root) => {
+    await store.maybeSpill('binary_session', 'S'.repeat(500));
+    assert.deepEqual(await readdir(root), []);
+  });
+});
+
+test('purge removes only expired plugin session directories', async () => {
+  const { mkdtemp: mkd, mkdir: mk, writeFile: wf, utimes, readdir: rd, rm: rmAll } = await import('node:fs/promises');
+  const base = await mkd(join(tmpdir(), 'dsh-rea-purge-'));
+  try {
+    const current = join(base, '2026-11-03T00-00-00-000Z-1000');
+    const old = join(base, '2026-10-01T00-00-00-000Z-1001');
+    const stray = join(base, 'keep-me');
+    for (const dir of [current, old, stray]) {
+      await mk(dir, { recursive: true });
+      await wf(join(dir, 'out.txt'), 'x'.repeat(100));
+    }
+    const past = new Date('2026-10-01T00:00:00Z').getTime();
+    await utimes(old, new Date(past), new Date(past));
+    const store = createArtifactStore({ root: current, base, retentionDays: 7 });
+    const result = await store.purge({ now: new Date('2026-11-03T00:00:00Z').getTime() });
+    assert.equal(result.removedDirs, 1);
+    assert.ok(result.freedBytes >= 100);
+    const remaining = await rd(base);
+    assert.ok(remaining.includes('keep-me'), 'a non-plugin directory is never touched');
+    assert.ok(remaining.includes('2026-11-03T00-00-00-000Z-1000'), 'the current session is kept');
+  } finally {
+    await rmAll(base, { recursive: true, force: true });
+  }
+});
+
+test('write() stores a named report inside the session directory', async () => {
+  await withStore({}, async (store, root) => {
+    const path = await store.write('report.md', '# report');
+    assert.ok(path.startsWith(root));
+    assert.equal(await readFile(path, 'utf8'), '# report');
+  });
+});

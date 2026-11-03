@@ -38,7 +38,8 @@ import { readFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { DESTRUCTIVE_TOOLS, MUTATING_TOOLS, createArtifactStore, sessionArtifactRoot } from './lib/artifacts.js';
+import { classifyTool, createArtifactStore, pathOutsideScope, sessionArtifactRoot } from './lib/artifacts.js';
+import { buildExportReportTool, buildPurgeArtifactsTool, buildTriageTool } from './lib/analysis-tools.js';
 import { childEnvironment, resolveConfig } from './lib/config.js';
 import {
   ENGINE_ENV_OVERRIDES, applyGhidraEnvironment, detectGhidra, engineConfigSignature,
@@ -119,26 +120,50 @@ export async function apply(ctx, rawConfig = {}) {
 
   // Results that do not fit the budget are written here and paged on demand;
   // the same directory carries the audit trail for state-changing calls.
+  const artifactBase = join(DSH_HOME, 'rea-artifacts');
   const artifacts = createArtifactStore({
-    root: sessionArtifactRoot(join(DSH_HOME, 'rea-artifacts')),
+    root: sessionArtifactRoot(artifactBase),
+    base: artifactBase,
     maxChars: config.maxResultChars,
+    retentionDays: config.artifactRetentionDays,
+    maxBytes: config.artifactMaxBytes,
+    sensitive: config.sensitiveArtifacts,
   });
+  // Retention is enforced on activation, not only on demand: a session that
+  // never calls rea_purge_artifacts still expires yesterday's decompiler output.
+  void artifacts.purge().catch(() => {});
 
   const statusPayload = async () => ({
     ...(await environmentStatus()),
     version: PLUGIN_VERSION,
     update: updateStatus(PLUGIN_VERSION),
+    policy: {
+      allowedTargets: config.allowedTargets.length,
+      allowDeviceMutations: config.allowDeviceMutations,
+      sensitiveArtifacts: config.sensitiveArtifacts,
+      artifactRetentionDays: config.artifactRetentionDays,
+      pinnedSha256: config.pinnedSha256,
+    },
   });
 
   /**
-   * Refuse the four operations that remove or overwrite something on a device
-   * unless the row opts in, and record every state-changing call.
+   * Change control. The classification is fail-closed rather than a hardcoded
+   * list: a tool added by a future REA release that is not clearly read-only is
+   * audited, and one that removes/overwrites device state is refused. A session
+   * scope, when configured, rejects any absolute path outside its roots.
    */
-  const guardTool = (name, args) => {
-    if (DESTRUCTIVE_TOOLS.has(name) && !config.allowDeviceMutations) {
-      return `${name} changes the attached device and is disabled. Set "allowDeviceMutations: true" on the dsh-rea row if that is intended.`;
+  const guardTool = (name, args, entry) => {
+    const outside = pathOutsideScope(args, config.allowedTargets);
+    if (outside) {
+      return `${name}: ${outside.key} "${outside.path}" is outside this session's allowedTargets. Add its root to the dsh-rea row if that is intended.`;
     }
-    if (MUTATING_TOOLS.has(name)) void artifacts.audit({ tool: name, args: Object.keys(args ?? {}) });
+    const { mutating, destructive, inferred, verb } = classifyTool(name, entry);
+    if (destructive && !config.allowDeviceMutations) {
+      return `${name} removes or overwrites something on the attached device and is disabled. Set "allowDeviceMutations: true" on the dsh-rea row if that is intended.`;
+    }
+    if (mutating) {
+      void artifacts.audit({ tool: name, args: Object.keys(args ?? {}), policy: inferred ? `inferred:${verb}` : 'known' });
+    }
     return undefined;
   };
 
@@ -173,6 +198,25 @@ export async function apply(ctx, rawConfig = {}) {
     const dispose = ctx.tools?.register(buildStatusTool({ client: clientFacade, engines: statusPayload, version: PLUGIN_VERSION }));
     return () => { try { dispose?.(); } catch {} };
   }, 'dsh-rea: status tool');
+
+  // These three do not need a live REA child: triage reads a file locally,
+  // export works on a supplied bundle, and purge only touches artifact files.
+  // Registering them before the connection also means they are available when
+  // the runtime fails to unpack (rea_triage still helps decide what to do).
+  ctx.effect(() => {
+    const dispose = ctx.tools?.register(buildTriageTool({ maxBytes: config.triageMaxBytes, yaraRulesDir: config.yaraRulesDir }));
+    return () => { try { dispose?.(); } catch {} };
+  }, 'dsh-rea: triage tool');
+
+  ctx.effect(() => {
+    const dispose = ctx.tools?.register(buildExportReportTool({ client: clientFacade, store: artifacts, toolVersion: PLUGIN_VERSION }));
+    return () => { try { dispose?.(); } catch {} };
+  }, 'dsh-rea: export report tool');
+
+  ctx.effect(() => {
+    const dispose = ctx.tools?.register(buildPurgeArtifactsTool(artifacts));
+    return () => { try { dispose?.(); } catch {} };
+  }, 'dsh-rea: artifact purge tool');
 
   if (REA_ENTRY === undefined || !config.enabled) {
     log.warn(`dsh-rea: ${REA_ENTRY === undefined ? 'the rea-agents runtime could not be resolved (the archive is missing or failed to unpack)' : 'disabled by config'}; no REA tools registered (rea_doctor still reports the state).`);
@@ -228,7 +272,7 @@ export async function apply(ctx, rawConfig = {}) {
       if (typeof entry?.name !== 'string') continue;
       const definition = buildTool(client, entry, config.deferCatalog, {
         spill: (name, text) => artifacts.maybeSpill(name, text),
-        guard: (name, args) => guardTool(name, args),
+        guard: (name, args, schemaEntry) => guardTool(name, args, schemaEntry),
       });
       definitions.push(definition);
       index.push({
@@ -289,8 +333,8 @@ export async function apply(ctx, rawConfig = {}) {
   if (ctx.webServer?.register) {
     const routeDispose = mountEnvironmentRoutes(ctx, {
       status: statusPayload,
-      checkUpdate: () => checkForUpdate(log, { current: PLUGIN_VERSION }),
-      installUpdate: () => installUpdate(log),
+      checkUpdate: () => checkForUpdate(log, { current: PLUGIN_VERSION, pinnedSha256: config.pinnedSha256 }),
+      installUpdate: () => installUpdate(log, { pinnedSha256: config.pinnedSha256, maxBackups: config.maxBackups }),
       installGhidra: async () => {
         const detected = await installGhidra(log);
         applyGhidraEnvironment(detected);

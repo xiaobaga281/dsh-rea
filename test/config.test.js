@@ -60,3 +60,29 @@ test('the child environment carries REA settings and withholds unrelated secrets
   assert.equal(env.OPENAI_API_KEY, undefined);
   assert.equal(env.GITHUB_TOKEN, undefined);
 });
+
+test('1.3.0 policy defaults are conservative and opt-in', () => {
+  const config = resolveConfig({});
+  assert.deepEqual(config.allowedTargets, []);
+  assert.equal(config.allowDeviceMutations, false);
+  assert.equal(config.sensitiveArtifacts, false);
+  assert.equal(config.artifactRetentionDays, 7);
+  assert.equal(config.maxBackups, 2);
+  assert.equal(config.pinnedSha256, null);
+  assert.equal(config.triageMaxBytes, 64 * 1024 * 1024);
+});
+
+test('a malformed pinned digest is ignored instead of pinning garbage', () => {
+  assert.equal(resolveConfig({ pinnedSha256: 'not-a-digest' }).pinnedSha256, null);
+  assert.equal(resolveConfig({ pinnedSha256: 'A'.repeat(64) }).pinnedSha256, 'a'.repeat(64));
+});
+
+test('retention and backup counts are clamped to usable ranges', () => {
+  assert.equal(resolveConfig({ artifactRetentionDays: 0 }).artifactRetentionDays, 1);
+  assert.equal(resolveConfig({ artifactRetentionDays: 9999 }).artifactRetentionDays, 365);
+  assert.equal(resolveConfig({ maxBackups: 99 }).maxBackups, 10);
+});
+
+test('allowedTargets only keeps non-empty strings', () => {
+  assert.deepEqual(resolveConfig({ allowedTargets: ['/samples', '', 42] }).allowedTargets, ['/samples']);
+});
