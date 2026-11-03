@@ -9,31 +9,25 @@ window.__ModuleLoader__.load({
     const dicts = {
       zh: {
         title: '逆向分析', subtitle: '环境与引擎', refresh: '刷新', loading: '读取环境…',
-        ready: '可用', missing: '未配置', preparing: '准备中', error: '失败',
+        preparing: '准备中', error: '失败',
         reaRuntime: '运行时', runtimeReady: '已解包', runtimeMissing: '未就绪',
         java: 'Java / JDK', jdkReady: '完整 JDK 已就绪', jdkMissing: '需要 64 位完整 JDK',
         ghidra: 'Ghidra', ghidraReady: '函数级反编译可用', ghidraMissing: '需要 Ghidra 12.1.4',
-        configured: '已发现', cached: '插件缓存', none: '未发现',
-        install: '准备 Ghidra', installing: '下载并解包中…', installed: '已准备',
-        installHint: '首次准备需要下载约 543 MB，校验后解包到 DSH 主目录。',
-        download: '下载', extract: '解包', bytes: '进度', path: '路径', version: '版本',
-        external: '其他外部工具', jadx: 'JADX', apktool: 'Apktool', wabt: 'WABT', rizin: 'Kuna/Rizin',
+        configured: '已发现', cached: '插件缓存',         install: '准备 Ghidra', installing: '下载并解包中…',         installHint: '首次准备需要下载约 543 MB，校验后解包到 DSH 主目录。',
+        download: '下载', extract: '解包', path: '路径',         external: '其他外部工具', jadx: 'JADX', apktool: 'Apktool', wabt: 'WABT', rizin: 'Kuna/Rizin',
         configuredYes: '已配置', configuredNo: '未配置', nativeHint: 'Ghidra 只在真正调用 native 函数分析时使用。',
-        noNetwork: '下载需要网络；失败时不会修改已有安装。', configure: '配置', configureHint: '请填写对应的绝对路径并保存。', manualTool: '此工具没有统一的自动安装包，请在下方路径中填写已有的可执行文件路径，然后保存。', pathConfig: '外部工具路径', save: '保存路径', saved: '已保存', pathPlaceholder: '绝对路径（可留空）', prepareTool: '准备',
+        noNetwork: '下载需要网络；失败时不会修改已有安装。', pathConfig: '外部工具路径', save: '保存路径', saved: '已保存', pathPlaceholder: '绝对路径（可留空）', prepareTool: '准备', cannotPrepare: '无自动安装包，请填写路径。', manualRizin: 'Kuna/Rizin 需要你自行安装，在下方填写可执行文件的绝对路径。',
       },
       en: {
         title: 'Reverse Engineering', subtitle: 'Environment and engines', refresh: 'Refresh', loading: 'Reading environment…',
-        ready: 'Ready', missing: 'Not configured', preparing: 'Preparing', error: 'Failed',
+        preparing: 'Preparing', error: 'Failed',
         reaRuntime: 'Runtime', runtimeReady: 'Unpacked', runtimeMissing: 'Not ready',
         java: 'Java / JDK', jdkReady: 'Full JDK ready', jdkMissing: '64-bit full JDK required',
         ghidra: 'Ghidra', ghidraReady: 'Function decompilation available', ghidraMissing: 'Ghidra 12.1.4 required',
-        configured: 'Detected', cached: 'Plugin cache', none: 'Not found',
-        install: 'Prepare Ghidra', installing: 'Downloading and extracting…', installed: 'Ready',
-        installHint: 'First preparation downloads about 543 MB and extracts it into the DSH home.',
-        download: 'Download', extract: 'Extract', bytes: 'Progress', path: 'Path', version: 'Version',
-        external: 'Other external tools', jadx: 'JADX', apktool: 'Apktool', wabt: 'WABT', rizin: 'Kuna/Rizin',
+        configured: 'Detected', cached: 'Plugin cache',         install: 'Prepare Ghidra', installing: 'Downloading and extracting…',         installHint: 'First preparation downloads about 543 MB and extracts it into the DSH home.',
+        download: 'Download', extract: 'Extract', path: 'Path',         external: 'Other external tools', jadx: 'JADX', apktool: 'Apktool', wabt: 'WABT', rizin: 'Kuna/Rizin',
         configuredYes: 'Configured', configuredNo: 'Not configured', nativeHint: 'Ghidra is used only when a native function analysis is actually called.',
-        noNetwork: 'Downloading requires network access; an existing installation is not changed on failure.', configure: 'Prepare', configureHint: 'Enter the corresponding absolute path and save it.', manualTool: 'This tool has no unified automatic package. Enter an existing executable path below and save it.', pathConfig: 'External tool paths', save: 'Save paths', saved: 'Saved', pathPlaceholder: 'Absolute path (optional)', prepareTool: 'Prepare',
+        noNetwork: 'Downloading requires network access; an existing installation is not changed on failure.', pathConfig: 'External tool paths', save: 'Save paths', saved: 'Saved', pathPlaceholder: 'Absolute path (optional)', prepareTool: 'Prepare', cannotPrepare: 'No automatic package; enter a path.', manualRizin: 'Kuna/Rizin must be installed by you; enter the absolute path below.',
       },
     };
     function api(path) { const u = new URL(path, document.baseURI); u.hash = ''; return u.pathname + u.search; }
@@ -54,12 +48,17 @@ window.__ModuleLoader__.load({
     function StatusDot({ state }) { return h('span', { className: `rea-dot rea-${state}` }); }
     function StatusRow({ label, state, detail, extra, action }) { return h('div', { className: 'rea-status-row' }, h('div', { className: 'rea-status-label' }, h(StatusDot, { state }), h('span', null, label)), h('span', { className: 'rea-status-detail' }, detail), extra || null, action || null); }
     function Section({ title, children }) { return h('section', { className: 'rea-section' }, h('h3', null, title), children); }
-    function ExternalCard({ keyName, label, configured, state, busy, onPrepare, t }) {
+    function ExternalCard({ keyName, label, configured, canPrepare, state, busy, onPrepare, t }) {
       const pct = state?.total > 0 ? Math.min(100, Math.round(state.bytes / state.total * 100)) : 0;
       const running = state?.phase === 'downloading' || state?.phase === 'configuring';
+      const failed = state?.phase === 'error';
+      const action = configured || running ? null
+        : canPrepare === false
+          ? h('small', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: '11px', flex: 'none' } }, t('cannotPrepare'))
+          : h('button', { className: 'rea-config', type: 'button', onClick: () => onPrepare(keyName), disabled: busy }, t('prepareTool'));
       return h('div', { className: 'rea-external', key: keyName },
-        h('div', { className: 'rea-external-main' }, h(StatusDot, { state: configured ? 'ok' : running ? 'busy' : state?.phase === 'error' ? 'error' : 'warn' }), h('span', null, label), h('small', null, configured ? t('configuredYes') : running ? `${t('preparing')} ${pct}%` : t('configuredNo'))),
-        configured || running ? null : h('button', { className: 'rea-config', type: 'button', onClick: () => onPrepare(keyName), disabled: busy }, t('prepareTool')),
+        h('div', { className: 'rea-external-main' }, h(StatusDot, { state: configured ? 'ok' : running ? 'busy' : failed ? 'error' : 'warn' }), h('span', null, label), h('small', null, configured ? t('configuredYes') : running ? `${t('preparing')} ${pct}%` : failed ? t('error') : t('configuredNo'))),
+        action,
         running ? h('div', { className: 'rea-tool-progress' }, h('div', { style: { width: `${pct}%` } })) : null,
       );
     }
@@ -72,7 +71,10 @@ window.__ModuleLoader__.load({
     }
     function ExternalGrid({ t, status, busy, onPrepare }) {
       const items = [['jadx', t('jadx')], ['apktool', t('apktool')], ['wabt', t('wabt')], ['rizin', t('rizin')]];
-      return h(Section, { title: t('external') }, h('div', { className: 'rea-external-grid' }, items.map(([key, label]) => h(ExternalCard, { key, keyName: key, label, configured: status.external?.[key], state: status.externalState?.[key], busy, onPrepare, t }))));
+      return h(Section, { title: t('external') },
+        h('div', { className: 'rea-external-grid' }, items.map(([key, label]) => h(ExternalCard, { key, keyName: key, label, configured: status.external?.[key], canPrepare: status.externalCanPrepare?.[key], state: status.externalState?.[key], busy, onPrepare, t }))),
+        h('p', { className: 'rea-hint', style: { marginLeft: 0 } }, t('manualRizin')),
+      );
     }
     function Panel({ t }) {
       const [status, setStatus] = React.useState(null);
@@ -80,16 +82,49 @@ window.__ModuleLoader__.load({
       const [error, setError] = React.useState('');
       const [paths, setPaths] = React.useState({});
       const [saved, setSaved] = React.useState(false);
-      const load = React.useCallback(async () => { try { setError(''); const next = await getStatus(); setStatus(next); if (next.configured) setPaths(next.configured); } catch (e) { setError(String(e?.message || e)); } }, []);
-      React.useEffect(() => { load(); const timer = setInterval(load, 3000); return () => clearInterval(timer); }, [load]);
+      // The panel polls for install progress. Without this flag the poll wrote
+      // the server's saved paths back into the form every three seconds, which
+      // erased whatever the person was typing.
+      const pathsTouched = React.useRef(false);
+      const load = React.useCallback(async (adopt) => {
+        try {
+          setError('');
+          const next = await getStatus();
+          setStatus(next);
+          if (adopt === true || !pathsTouched.current) {
+            setPaths(next.configured ?? {});
+            pathsTouched.current = false;
+          }
+        } catch (e) { setError(String(e?.message || e)); }
+      }, []);
+      React.useEffect(() => {
+        load(false);
+        const timer = setInterval(() => { if (document.visibilityState !== 'hidden') load(false); }, 3000);
+        return () => clearInterval(timer);
+      }, [load]);
+      React.useEffect(() => {
+        if (!saved) return undefined;
+        const timer = setTimeout(() => setSaved(false), 2000);
+        return () => clearTimeout(timer);
+      }, [saved]);
+      const editPaths = React.useCallback((updater) => { pathsTouched.current = true; setPaths(updater); }, []);
       const gh = status?.ghidra;
       const java = status?.java;
       const doInstall = async () => { setBusy(true); setError(''); try { setStatus(await installGhidra()); } catch (e) { setError(String(e?.message || e)); } finally { setBusy(false); } };
-      const doSave = async () => { setBusy(true); setError(''); setSaved(false); try { const next = await saveConfig(paths); setStatus(next); setSaved(true); } catch (e) { setError(String(e?.message || e)); } finally { setBusy(false); } };
-      const doTool = async (tool) => { setBusy(true); setError(''); try { if (tool === 'rizin') { setError(t('manualTool')); return; } setStatus(await installTool(tool)); } catch (e) { setError(String(e?.message || e)); } finally { setBusy(false); } };
+      const doSave = async () => {
+        setBusy(true); setError(''); setSaved(false);
+        try {
+          const next = await saveConfig(paths);
+          setStatus(next);
+          setPaths(next.configured ?? {});
+          pathsTouched.current = false;
+          setSaved(true);
+        } catch (e) { setError(String(e?.message || e)); } finally { setBusy(false); }
+      };
+      const doTool = async (tool) => { setBusy(true); setError(''); try { setStatus(await installTool(tool)); } catch (e) { setError(String(e?.message || e)); } finally { setBusy(false); } };
       const pct = gh?.total > 0 ? Math.min(100, Math.round(gh.bytes / gh.total * 100)) : 0;
       return h('div', { className: 'rea-panel' },
-        h('div', { className: 'rea-header' }, h('div', { className: 'rea-heading' }, h('div', { className: 'rea-title' }, lensIcon(22, true), h('span', null, t('title'))), h('div', { className: 'rea-subtitle' }, t('subtitle'))), h('button', { className: 'rea-ghost', type: 'button', onClick: load, disabled: busy }, t('refresh'))),
+        h('div', { className: 'rea-header' }, h('div', { className: 'rea-heading' }, h('div', { className: 'rea-title' }, lensIcon(22, true), h('span', null, t('title'))), h('div', { className: 'rea-subtitle' }, t('subtitle'))), h('button', { className: 'rea-ghost', type: 'button', onClick: () => load(false), disabled: busy }, t('refresh'))),
         error ? h('div', { className: 'rea-alert' }, error) : null,
         !status ? h('div', { className: 'rea-loading' }, t('loading')) : h(React.Fragment, null,
           h(Section, { title: t('reaRuntime') }, h(StatusRow, { label: t('reaRuntime'), state: status.runtime?.unpacked ? 'ok' : 'warn', detail: status.runtime?.unpacked ? t('runtimeReady') : t('runtimeMissing') })),
@@ -103,7 +138,7 @@ window.__ModuleLoader__.load({
             h('p', { className: 'rea-hint' }, t('nativeHint')),
           ),
           h(ExternalGrid, { t, status, busy, onPrepare: doTool }),
-          h(PathForm, { t, paths, setPaths, doSave, busy, saved }),
+          h(PathForm, { t, paths, setPaths: editPaths, doSave, busy, saved }),
           h('div', { className: 'rea-footnote' }, t('noNetwork')),
         ),
       );

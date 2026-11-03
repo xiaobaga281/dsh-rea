@@ -14,3 +14,6 @@ dist/
 # Editor / OS noise
 .DS_Store
 Thumbs.db
+
+# Agent workspace data (memory, local state)
+.workbuddy/
