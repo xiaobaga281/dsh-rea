@@ -110,7 +110,18 @@ const IMPORT_GROUPS = [
   { dll: 'ADVAPI32.dll', apis: ['RegSetValueExA', 'CryptEncrypt'] },
 ];
 
-function buildRdata(payload, { hashTable = null } = {}) {
+/**
+ * Build the read-only section.
+ *
+ * `imports: false` is the D6 step: no descriptors, no DLL names, no thunks, so
+ * the import directory has nothing to point at. What remains is the hash table,
+ * which is what a real loader leaves behind.
+ *
+ * TLS and the dispatch table need virtual addresses that depend on where .text
+ * lands, and that depends on this section's length. They are reserved here as
+ * zero-filled slots and patched in buildPE once textVa is known.
+ */
+function buildRdata(payload, { hashTable = null, imports = true, tls = false, dispatch = 0 } = {}) {
   const parts = [];
   let cursor = 0;
   const put = (buffer, padding = 0) => {
@@ -120,22 +131,24 @@ function buildRdata(payload, { hashTable = null } = {}) {
     return at;
   };
 
-  const descriptorsAt = put(Buffer.alloc(20 * (IMPORT_GROUPS.length + 1)));
+  let descriptorsAt = null;
   const dllNameAt = [];
-  for (const entry of IMPORT_GROUPS) dllNameAt.push(put(Buffer.from(`${entry.dll}\0`, 'latin1'), 2));
-
   const thunkAt = [];
-  for (const entry of IMPORT_GROUPS) {
-    const thunk = Buffer.alloc(4 * (entry.apis.length + 1));
-    thunkAt.push({ at: put(thunk), entry, names: entry.apis });
-  }
-  for (const group of thunkAt) {
-    const patched = Buffer.alloc(4 * (group.entry.apis.length + 1));
-    group.entry.apis.forEach((api, slot) => {
-      const at = put(Buffer.from(`\0\0${api}\0`, 'latin1'), 2);
-      patched.writeUInt32LE(0x1000 + at, slot * 4);
-    });
-    parts.find((item) => item.at === group.at).buffer = patched;
+  if (imports) {
+    descriptorsAt = put(Buffer.alloc(20 * (IMPORT_GROUPS.length + 1)));
+    for (const entry of IMPORT_GROUPS) dllNameAt.push(put(Buffer.from(`${entry.dll}\0`, 'latin1'), 2));
+    for (const entry of IMPORT_GROUPS) {
+      const thunk = Buffer.alloc(4 * (entry.apis.length + 1));
+      thunkAt.push({ at: put(thunk), entry, names: entry.apis });
+    }
+    for (const group of thunkAt) {
+      const patched = Buffer.alloc(4 * (group.entry.apis.length + 1));
+      group.entry.apis.forEach((api, slot) => {
+        const at = put(Buffer.from(`\0\0${api}\0`, 'latin1'), 2);
+        patched.writeUInt32LE(0x1000 + at, slot * 4);
+      });
+      parts.find((item) => item.at === group.at).buffer = patched;
+    }
   }
 
   if (hashTable && hashTable.length > 0) {
@@ -144,6 +157,13 @@ function buildRdata(payload, { hashTable = null } = {}) {
     put(table);
   }
 
+  // IMAGE_TLS_DIRECTORY32: Start, End, Index, AddressOfCallbacks, ZeroFill, Characteristics.
+  const tlsAt = tls ? put(Buffer.alloc(24)) : null;
+  const callbacksAt = tls ? put(Buffer.alloc(8)) : null;
+  // A dispatch table is just an array of code pointers; the state variable and
+  // the indirect jump live in .text, which this fixture does not need to encode.
+  const dispatchAt = dispatch > 0 ? put(Buffer.alloc(dispatch * 4)) : null;
+
   const payloadAt = align(cursor, 16);
   parts.push({ at: payloadAt, buffer: payload });
 
@@ -151,13 +171,16 @@ function buildRdata(payload, { hashTable = null } = {}) {
   const rdata = Buffer.alloc(size);
   for (const part of parts) part.buffer.copy(rdata, part.at);
 
-  IMPORT_GROUPS.forEach((entry, index) => {
-    const at = descriptorsAt + index * 20;
-    rdata.writeUInt32LE(0x1000 + thunkAt[index].at, at);
-    rdata.writeUInt32LE(0x1000 + dllNameAt[index], at + 12);
-    rdata.writeUInt32LE(0x1000 + thunkAt[index].at, at + 16);
-  });
-  return rdata;
+  if (imports) {
+    IMPORT_GROUPS.forEach((entry, index) => {
+      const at = descriptorsAt + index * 20;
+      rdata.writeUInt32LE(0x1000 + thunkAt[index].at, at);
+      rdata.writeUInt32LE(0x1000 + dllNameAt[index], at + 12);
+      rdata.writeUInt32LE(0x1000 + thunkAt[index].at, at + 16);
+    });
+  }
+
+  return { buffer: rdata, info: { tlsAt, callbacksAt, dispatchAt, dispatchCount: dispatch } };
 }
 
 function buildText(stackChunks = []) {
@@ -178,7 +201,9 @@ function buildText(stackChunks = []) {
   return buffer;
 }
 
-function buildPE({ rdata, text }) {
+const TLS_CODE_RVA = 0x800;
+
+function buildPE({ rdata, text, imports = true, info = null, overlap = false }) {
   const headers = 0x200;
   const rdataRaw = align(rdata.length, 0x200);
   const textRaw = align(text.length, 0x200);
@@ -186,7 +211,25 @@ function buildPE({ rdata, text }) {
   const textVa = rdataVa + align(rdataRaw, 0x1000);
   const imageSize = textVa + align(textRaw, 0x1000);
   const total = headers + rdataRaw + textRaw;
+  // Overlapping raw ranges are a loader signature: .text starts inside .rdata's
+  // last page, so a file-offset-based tool and an RVA-based tool disagree about
+  // what is where.
+  const textPointer = headers + rdataRaw - (overlap ? 0x200 : 0);
   const file = Buffer.alloc(total);
+
+  // TLS and the dispatch table can only be filled in now that textVa is known.
+  if (info) {
+    if (info.tlsAt !== null) {
+      rdata.writeUInt32LE(0x400000 + rdataVa + info.callbacksAt, info.tlsAt + 12);
+      rdata.writeUInt32LE(0x400000 + textVa + TLS_CODE_RVA, info.callbacksAt);
+      rdata.writeUInt32LE(0, info.callbacksAt + 4);
+    }
+    if (info.dispatchAt !== null) {
+      for (let index = 0; index < info.dispatchCount; index += 1) {
+        rdata.writeUInt32LE(0x400000 + textVa + 0x100 + index * 0x20, info.dispatchAt + index * 4);
+      }
+    }
+  }
 
   file.write('MZ', 0, 'latin1');
   file.writeUInt32LE(0x80, 0x3c);
@@ -207,8 +250,14 @@ function buildPE({ rdata, text }) {
   file.writeUInt32LE(headers, opt + 60);
   file.writeUInt16LE(3, opt + 68);
   file.writeUInt32LE(16, opt + 92);
-  file.writeUInt32LE(rdataVa, opt + 96 + 8);
-  file.writeUInt32LE(0x40, opt + 96 + 12);
+  if (imports) {
+    file.writeUInt32LE(rdataVa, opt + 96 + 8);
+    file.writeUInt32LE(0x40, opt + 96 + 12);
+  }
+  if (info?.tlsAt !== null && info?.tlsAt !== undefined) {
+    file.writeUInt32LE(rdataVa + info.tlsAt, opt + 96 + 9 * 8);
+    file.writeUInt32LE(24, opt + 96 + 9 * 8 + 4);
+  }
 
   const writeSection = (index, name, va, rawSize, rawPointer, characteristics) => {
     const at = opt + 0xe0 + index * 40;
@@ -220,10 +269,10 @@ function buildPE({ rdata, text }) {
     file.writeUInt32LE(characteristics, at + 36);
   };
   writeSection(0, '.rdata', rdataVa, rdataRaw, headers, 0x40000040);
-  writeSection(1, '.text', textVa, textRaw, headers + rdataRaw, 0x60000020);
+  writeSection(1, '.text', textVa, textRaw, textPointer, 0x60000020);
 
   rdata.copy(file, headers);
-  text.copy(file, headers + rdataRaw);
+  text.copy(file, textPointer);
   return file;
 }
 
@@ -232,6 +281,26 @@ function buildPE({ rdata, text }) {
 const KEY4 = [0x9e, 0x37, 0x79, 0xb4];
 const RC4_KEY = 'OrbitCfgKey2026!';
 const NESTED_KEY = [0x2b, 0x8d, 0x41, 0xf0];
+
+/**
+ * Salted hash: the same loop as the parameterised family, then XOR with a
+ * per-build constant that only exists inside the sealed config. No algorithm
+ * family can recover the names, because the missing input is not an algorithm
+ * parameter - it is data the file refuses to hand over statically.
+ */
+const SALTED_SEED = 0x5d3a91c7;
+const saltedHash = (name) => {
+  let hash = 0x2f;
+  for (const byte of Buffer.from(name, 'latin1')) hash = (Math.imul(hash, 0x1f) ^ byte) >>> 0;
+  return (hash ^ SALTED_SEED) >>> 0;
+};
+
+/** ROR13, the hash Metasploit and most shellcode loaders use. */
+const ror13Hash = (name) => {
+  let hash = 0;
+  for (const byte of Buffer.from(name, 'latin1')) hash = (((hash >>> 13) | (hash << 19)) + byte) >>> 0;
+  return hash >>> 0;
+};
 
 /** Deterministic decoys: random bytes that must not turn into fake indicators. */
 function decoyBlobs(count, size, seed = 0x1234abcd) {
@@ -382,6 +451,127 @@ const GENERATIONS = {
       unrecoverable: true,
     };
   },
+
+  D6: () => {
+    // D5 moved the strings out of reach of a decoder; D6 moves the *structure*
+    // out of reach of the report. Three changes, all of them what a loader
+    // actually looks like when its author expected a static analyst:
+    //
+    //   - the import directory is gone, so the only way to name the APIs is the
+    //     hash table (ROR13, the one Metasploit uses);
+    //   - a TLS callback runs before the entry point, which is where the
+    //     anti-debug check lives in the real thing;
+    //   - a dispatch table of code pointers sits in .rdata, the signature of
+    //     control-flow flattening.
+    //
+    // The key-derivation hint moves inside the nested layer as well: D5 left it
+    // in plaintext, so "plan a dynamic trace" could be answered without
+    // decoding anything. Here the analyst has to open the container first,
+    // which is the order an independent analyst actually works in.
+    const sealed = rc4(Buffer.from('runtime-derived-key-placeholder', 'latin1'),
+      records(track([ENDPOINTS[1], ANTI[8], IOC_TEXT[2], `canary=${CANARY[0]}`])));
+    const inner = xorRepeat(records([
+      ...track([ENDPOINTS[0], ...MARKERS, ...ANTI.slice(0, 8)]),
+      'cfg=rc4;key=derive(GetVolumeInformationA.serial);',
+    ]), NESTED_KEY);
+    track([ENDPOINTS[2], ENDPOINTS[3], ENDPOINTS[4]]);
+    const custom = Buffer.concat([
+      Buffer.from('abc=', 'latin1'), Buffer.from(B64_ALPHABET, 'latin1'), Buffer.from(';\0', 'latin1'),
+      b64Custom(deflateSync(records(track([ENDPOINTS[2], ...ANTI.slice(8), ...IOC_TEXT])))),
+      Buffer.from('\0', 'latin1'),
+    ]);
+    const decoys = decoyBlobs(18, 1536, 0x51bd2e77);
+    return {
+      note: 'import directory removed + ROR13 API hashes + TLS callback + flattened dispatch table',
+      payload: Buffer.concat([
+        Buffer.from('sealed=', 'latin1'), sealed, Buffer.from('\0', 'latin1'),
+        Buffer.from(`cfg=deflate+xor;key=${Buffer.from(NESTED_KEY).toString('hex')};\0`, 'latin1'),
+        deflateSync(inner),
+        Buffer.from('\0', 'latin1'),
+        interleave(ENDPOINTS[3], ENDPOINTS[4]), Buffer.from('\0', 'latin1'),
+        custom,
+        ...decoys,
+      ]),
+      hashTable: IMPORT_GROUPS.flatMap((group) => group.apis).map(ror13Hash),
+      decoys: decoys.length,
+      unrecoverable: true,
+      pe: { imports: false, tls: true, dispatch: 24 },
+    };
+  },
+
+  D7: () => {
+    // D6 gave the analyst a hash table it could open. D7 keeps every structural
+    // trick but swaps the hash for a private one, then adds two sections that
+    // overlap in the file: the import directory is still gone, the TLS callback
+    // is still there, and the only way to name an API is to notice that the
+    // table exists and admit the algorithm is unknown.
+    //
+    // This is the honesty generation. A tool that invents names here is worse
+    // than one that reports "7 hash entries, algorithm unknown".
+    const sealed = rc4(Buffer.from('runtime-derived-key-placeholder', 'latin1'),
+      records(track([ENDPOINTS[1], ANTI[8], IOC_TEXT[2], `canary=${CANARY[0]}`])));
+    const inner = xorRepeat(records([
+      ...track([ENDPOINTS[0], ...MARKERS, ...ANTI.slice(0, 8)]),
+      'cfg=rc4;key=derive(GetVolumeInformationA.serial);',
+    ]), NESTED_KEY);
+    track([ENDPOINTS[2], ENDPOINTS[3], ENDPOINTS[4]]);
+    const custom = Buffer.concat([
+      Buffer.from('abc=', 'latin1'), Buffer.from(B64_ALPHABET, 'latin1'), Buffer.from(';\0', 'latin1'),
+      b64Custom(deflateSync(records(track([ENDPOINTS[2], ...ANTI.slice(8), ...IOC_TEXT])))),
+      Buffer.from('\0', 'latin1'),
+    ]);
+    const decoys = decoyBlobs(20, 1024, 0x2f9a11c3);
+    return {
+      note: 'unknown hash algorithm + stripped imports + TLS callback + overlapping sections',
+      payload: Buffer.concat([
+        Buffer.from('sealed=', 'latin1'), sealed, Buffer.from('\0', 'latin1'),
+        Buffer.from(`cfg=deflate+xor;key=${Buffer.from(NESTED_KEY).toString('hex')};\0`, 'latin1'),
+        deflateSync(inner), Buffer.from('\0', 'latin1'),
+        interleave(ENDPOINTS[3], ENDPOINTS[4]), Buffer.from('\0', 'latin1'),
+        custom,
+        ...decoys,
+      ]),
+      hashTable: IMPORT_GROUPS.flatMap((group) => group.apis).map(hashUnknown),
+      decoys: decoys.length,
+      unrecoverable: true,
+      pe: { imports: false, tls: true, dispatch: 16, overlap: true },
+    };
+  },
+
+  D8: () => {
+    // The next boundary is not structural, it is informational: the hash loop is
+    // ordinary, but its salt is generated per build and stored inside the
+    // sealed config. Every algorithm family fails, and the correct answer is
+    // "10 hash entries, algorithm unknown, salt probably sealed" - not a guess.
+    const sealed = rc4(Buffer.from('runtime-derived-key-placeholder', 'latin1'),
+      records(track([ENDPOINTS[1], ANTI[8], IOC_TEXT[2], `canary=${CANARY[0]}`])));
+    const inner = xorRepeat(records([
+      ...track([ENDPOINTS[0], ...MARKERS, ...ANTI.slice(0, 8)]),
+      `cfg=rc4;key=derive(GetVolumeInformationA.serial);salt=0x${SALTED_SEED.toString(16)};`,
+    ]), NESTED_KEY);
+    track([ENDPOINTS[2], ENDPOINTS[3], ENDPOINTS[4]]);
+    const custom = Buffer.concat([
+      Buffer.from('abc=', 'latin1'), Buffer.from(B64_ALPHABET, 'latin1'), Buffer.from(';\0', 'latin1'),
+      b64Custom(deflateSync(records(track([ENDPOINTS[2], ...ANTI.slice(8), ...IOC_TEXT])))),
+      Buffer.from('\0', 'latin1'),
+    ]);
+    const decoys = decoyBlobs(22, 1280, 0x6b1f0d42);
+    return {
+      note: 'salted API hashes (salt sealed) + stripped imports + TLS callback + overlapping sections',
+      payload: Buffer.concat([
+        Buffer.from('sealed=', 'latin1'), sealed, Buffer.from('\0', 'latin1'),
+        Buffer.from(`cfg=deflate+xor;key=${Buffer.from(NESTED_KEY).toString('hex')};\0`, 'latin1'),
+        deflateSync(inner), Buffer.from('\0', 'latin1'),
+        interleave(ENDPOINTS[3], ENDPOINTS[4]), Buffer.from('\0', 'latin1'),
+        custom,
+        ...decoys,
+      ]),
+      hashTable: IMPORT_GROUPS.flatMap((group) => group.apis).map(saltedHash),
+      decoys: decoys.length,
+      unrecoverable: true,
+      pe: { imports: false, tls: true, dispatch: 16, overlap: true },
+    };
+  },
 };
 
 export const GENERATION_IDS = Object.keys(GENERATIONS);
@@ -402,8 +592,15 @@ export function buildGeneration(id) {
   tracked = new Set();
   const spec = GENERATIONS[id]();
   assertCoverage(id);
-  const rdata = buildRdata(spec.payload, { hashTable: spec.hashTable ?? null });
+  const pe = spec.pe ?? {};
+  const built = buildRdata(spec.payload, { hashTable: spec.hashTable ?? null, ...pe });
   const text = buildText(spec.stack ?? []);
-  const buffer = buildPE({ rdata, text: text });
+  const buffer = buildPE({
+    rdata: built.buffer,
+    text,
+    imports: pe.imports !== false,
+    info: built.info,
+    overlap: Boolean(pe.overlap),
+  });
   return { id, buffer, note: spec.note, decoys: spec.decoys ?? 0, unrecoverable: Boolean(spec.unrecoverable) };
 }

@@ -12,7 +12,7 @@
  * Run: npm run duel [-- --out dist/duel --label 1.7.0]
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { buildGeneration, GENERATION_IDS } from './duel/defender.mjs';
 import { attack, loadTools } from './duel/attacker.mjs';
@@ -30,7 +30,7 @@ const rows = [];
 
 for (const id of generations) {
   const built = buildGeneration(id);
-  const file = join(out, `${id}.exe`);
+  const file = resolve(out, `${id}.exe`);
   writeFileSync(file, built.buffer);
   const result = await attack(tools, file);
   rows.push({
@@ -52,6 +52,19 @@ const ceiling = {
   tracking: control.trackingIds,
   anti: control.antiTechniques,
   watermarks: control.watermarks,
+  // The analyst-level dimensions also take their ceiling from D0: whatever the
+  // plaintext control exposes is the reachable set, not a hand-written list.
+  api: control.apiHits,
+  behavior: control.behaviorHits,
+};
+
+// Rebalanced for the L3 question. String recall still leads, because a report
+// that cannot name the endpoint is not a report; but structure, behaviour and
+// the next experiment now carry 43% between them, which is the difference
+// between a technician and an analyst.
+const WEIGHTS = {
+  endpoints: 0.15, iocText: 0.15, tracking: 0.10, anti: 0.12, watermarks: 0.05,
+  api: 0.15, behavior: 0.15, plan: 0.13,
 };
 
 const ratio = (hit, total) => (total === 0 ? 1 : Number((hit / total).toFixed(3)));
@@ -62,6 +75,8 @@ const scoreRow = (row) => {
     tracking: row.trackingIds.filter((value) => ceiling.tracking.includes(value)),
     anti: row.antiTechniques.filter((value) => ceiling.anti.includes(value)),
     watermarks: row.watermarks.filter((value) => ceiling.watermarks.includes(value)),
+    api: row.apiHits.filter((value) => ceiling.api.includes(value)),
+    behavior: row.behaviorHits.filter((value) => ceiling.behavior.includes(value)),
   };
   const recall = {
     endpoints: ratio(got.endpoints.length, ceiling.endpoints.length),
@@ -69,17 +84,31 @@ const scoreRow = (row) => {
     tracking: ratio(got.tracking.length, ceiling.tracking.length),
     anti: ratio(got.anti.length, ceiling.anti.length),
     watermarks: ratio(got.watermarks.length, ceiling.watermarks.length),
+    // A dimension with nothing in the control is not "fully covered" - it is
+    // unmeasurable, and counting it as 1.0 would quietly inflate every row.
+    api: ceiling.api.length === 0 ? null : ratio(got.api.length, ceiling.api.length),
+    behavior: ceiling.behavior.length === 0 ? null : ratio(got.behavior.length, ceiling.behavior.length),
+    plan: row.unrecoverable ? (row.planOk ? 1 : 0) : null,
   };
-  const overall = Number((
-    recall.endpoints * 0.25 + recall.iocText * 0.25 + recall.tracking * 0.2
-    + recall.anti * 0.2 + recall.watermarks * 0.1
-  ).toFixed(4));
+  // `plan` only means something when something is actually sealed; for the
+  // open generations its weight is redistributed instead of scored as a free 1.
+  let weighted = 0;
+  let total = 0;
+  for (const [key, weight] of Object.entries(WEIGHTS)) {
+    const value = recall[key];
+    if (value === null) continue;
+    weighted += value * weight;
+    total += weight;
+  }
+  const overall = Number((weighted / total).toFixed(4));
   const missing = {
     endpoints: ceiling.endpoints.filter((value) => !got.endpoints.includes(value)),
     iocText: ceiling.iocText.filter((value) => !got.iocText.includes(value)),
     tracking: ceiling.tracking.filter((value) => !got.tracking.includes(value)),
     anti: ceiling.anti.filter((value) => !got.anti.includes(value)),
     watermarks: ceiling.watermarks.filter((value) => !got.watermarks.includes(value)),
+    api: ceiling.api.filter((value) => !got.api.includes(value)),
+    behavior: ceiling.behavior.filter((value) => !got.behavior.includes(value)),
   };
   // A target that cannot be opened statically must be reported as such; silence
   // is a worse answer than "this region needs a dynamic trace".
@@ -94,10 +123,10 @@ const scoreRow = (row) => {
 
 const scored = rows.map((row) => (row.id === 'D0' ? {
   ...row,
-  got: { endpoints: row.endpoints, iocText: row.iocText, tracking: row.trackingIds, anti: row.antiTechniques, watermarks: row.watermarks },
-  recall: { endpoints: 1, iocText: 1, tracking: 1, anti: 1, watermarks: 1 },
+  got: { endpoints: row.endpoints, iocText: row.iocText, tracking: row.trackingIds, anti: row.antiTechniques, watermarks: row.watermarks, api: row.apiHits, behavior: row.behaviorHits },
+  recall: { endpoints: 1, iocText: 1, tracking: 1, anti: 1, watermarks: 1, api: 1, behavior: 1, plan: null },
   overall: 1,
-  missing: { endpoints: [], iocText: [], tracking: [], anti: [], watermarks: [] },
+  missing: { endpoints: [], iocText: [], tracking: [], anti: [], watermarks: [], api: [], behavior: [] },
   honesty: null,
   noise: row.noise.length,
 } : scoreRow(row)));
@@ -141,6 +170,9 @@ for (const row of scored) {
     + `anti ${row.got.anti.length}/${ceiling.anti.length}  `
     + `watermark ${row.got.watermarks.length}/${ceiling.watermarks.length}  `
     + `| noise ${row.noise}`);
+  console.log(`    api ${row.got.api.length}/${ceiling.api.length}  `
+    + `behaviour ${row.got.behavior.length}/${ceiling.behavior.length}  `
+    + `plan ${row.unrecoverable ? (row.planOk ? 'yes' : 'NO') : 'n/a'}`);
   const misses = Object.entries(row.missing).filter(([, list]) => list.length > 0)
     .map(([key, list]) => `${key}: ${list.slice(0, 3).join(' | ')}`);
   if (misses.length > 0) console.log(`    blind spots: ${misses.join('  ;;  ')}`);
@@ -148,13 +180,16 @@ for (const row of scored) {
   console.log(`    score ${pct(row.overall)}`);
   console.log('');
 }
-console.log(`${pad('gen', 5)}${pad('endpoint', 10)}${pad('indicator', 11)}${pad('tracking', 10)}${pad('anti', 7)}${pad('wm', 6)}${pad('noise', 7)}score`);
+console.log(`${pad('gen', 5)}${pad('endpoint', 10)}${pad('indicator', 11)}${pad('tracking', 10)}${pad('anti', 7)}${pad('wm', 6)}${pad('api', 7)}${pad('behav', 8)}${pad('plan', 6)}${pad('noise', 7)}score`);
 for (const row of scored) {
   console.log(`${pad(row.id, 5)}${pad(`${row.got.endpoints.length}/${ceiling.endpoints.length}`, 10)}`
     + `${pad(`${row.got.iocText.length}/${ceiling.iocText.length}`, 11)}`
     + `${pad(`${row.got.tracking.length}/${ceiling.tracking.length}`, 10)}`
     + `${pad(`${row.got.anti.length}/${ceiling.anti.length}`, 7)}`
     + `${pad(`${row.got.watermarks.length}/${ceiling.watermarks.length}`, 6)}`
+    + `${pad(`${row.got.api.length}/${ceiling.api.length}`, 7)}`
+    + `${pad(`${row.got.behavior.length}/${ceiling.behavior.length}`, 8)}`
+    + `${pad(row.unrecoverable ? (row.planOk ? 'yes' : 'NO') : '-', 6)}`
     + `${pad(row.noise, 7)}${pct(row.overall)}`);
 }
 console.log(`mean ${pct(mean)}  weakest ${report.weakest}  honesty failures: ${report.honestyFailures.join(', ') || 'none'}`);

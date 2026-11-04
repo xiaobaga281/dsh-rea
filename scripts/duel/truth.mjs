@@ -47,4 +47,36 @@ export const IOC_TEXT = [
 /** Per-build attribution watermark: identifies which analyst copy leaked. */
 export const CANARY = ['orbit-4d81f0c3a7e2', '7c93e1ab'];
 
+/**
+ * The import set the defender links against. D0 exposes it as an import table,
+ * so it is both the behaviour ground truth and the API-recovery ceiling: D6-D7
+ * remove the directory and only leave hashes, and the analyst is expected to
+ * name the same APIs from those.
+ */
+export const APIS = [
+  'IsDebuggerPresent', 'VirtualAllocEx', 'CreateRemoteThread', 'GetComputerNameA',
+  'GetVolumeInformationA', 'QueryPerformanceCounter', 'InternetConnectA',
+  'HttpSendRequestA', 'RegSetValueExA', 'CryptEncrypt',
+];
+
+/**
+ * Behaviour labels the report must reach. Strings, not ids: the score should
+ * follow what a reader sees, and a renamed internal id must not silently
+ * change the number.
+ */
+export const BEHAVIOURS = [
+  'collects stable device identifiers',
+  'reports to a remote endpoint',
+  'writes persistent state',
+  'checks for a debugger or a sandbox',
+  'can write into another process',
+  'encrypts or derives keys',
+];
+
+/** The one experiment that actually opens the sealed config. */
+export const PLAN = {
+  hook: 'GetVolumeInformationA',
+  action: /\b(break|dump|trace|decrypt|hook)\b/i,
+};
+
 export const ALL_STRINGS = [...ENDPOINTS, ...MARKERS, ...ANTI, ...IOC_TEXT];

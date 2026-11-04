@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs';
 
 import { apply } from '../../index.js';
-import { CANARY, ENDPOINTS, IOC_TEXT } from './truth.mjs';
+import { APIS, BEHAVIOURS, CANARY, ENDPOINTS, IOC_TEXT, PLAN } from './truth.mjs';
 
 const TRUTH_VALUES = new Set([...ENDPOINTS, ...IOC_TEXT, ...CANARY]);
 
@@ -32,6 +32,9 @@ function textOf(result) {
   if (!result) return '';
   if (typeof result === 'string') return result;
   if (typeof result.text === 'string') return result.text;
+  // rea_triage returns { report }, rea_ioc_extract returns structured content
+  // with a text block; both are "what the analyst sees".
+  if (typeof result.report === 'string') return result.report;
   if (Array.isArray(result)) return result.map(textOf).join('\n');
   return '';
 }
@@ -71,6 +74,11 @@ export async function attack(tools, path) {
   const tracking = await call(tools, 'rea_tracking_surface', { path, detail: true });
   const anti = await call(tools, 'rea_anti_analysis', { path });
   const exposure = await call(tools, 'rea_analyst_exposure', { path });
+  // The analyst-level questions - what is it built from, what is it for, what
+  // would settle what is still unknown - are answered by triage, so they are
+  // scored from triage's own report rather than from a private helper.
+  const triage = await call(tools, 'rea_triage', { path });
+  const triageText = triage.text;
 
   const saved = readSavedJson(ioc.text);
   const values = new Set();
@@ -100,22 +108,39 @@ export async function attack(tools, path) {
     && ![ENDPOINTS, IOC_TEXT].flat().some((truth) => value.includes(truth)));
   const unresolved = /unresolved encrypted region/i.test(ioc.text);
 
+  // Names and behaviours are matched case-insensitively against the report an
+  // analyst would read, never read back from the module that produced them.
+  const apiHits = APIS.filter((api) => new RegExp(`\\b${api}\\b`, 'i').test(triageText));
+  const behaviorHits = BEHAVIOURS.filter((label) => triageText.toLowerCase().includes(label.toLowerCase()));
+  const planAt = triageText.toLowerCase().indexOf('experiments (ranked');
+  const planBlock = planAt >= 0 ? triageText.slice(planAt) : '';
+  const planOk = planBlock.length > 0
+    && new RegExp(PLAN.hook, 'i').test(planBlock)
+    && PLAN.action.test(planBlock);
+
   return {
     path,
-    ok: ioc.ok && tracking.ok && anti.ok && exposure.ok,
-    errors: [ioc, tracking, anti, exposure].filter((item) => !item.ok).map((item) => item.error ?? 'missing tool'),
+    ok: ioc.ok && tracking.ok && anti.ok && exposure.ok && triage.ok,
+    triageOk: triage.ok,
+    errors: [ioc, tracking, anti, exposure, triage].filter((item) => !item.ok).map((item) => item.error ?? 'missing tool'),
     endpoints,
     iocText,
     trackingIds: [...trackingIds],
     antiTechniques: [...antiTechniques],
     watermarks,
     unresolved,
+    apiHits,
+    behaviorHits,
+    planOk,
+    planExcerpt: planBlock.split('\n').slice(0, 6).join('\n'),
     noise,
     indicatorCount: values.size,
     types: Object.fromEntries([...types].map(([type, set]) => [type, set.size])),
     excerpts: {
       ioc: ioc.text.split('\n').slice(0, 6).join('\n'),
       exposure: exposure.text.split('\n').slice(0, 4).join('\n'),
+      structure: triageText.split('\n').find((line) => line.startsWith('structure:')) ?? '',
+      behaviour: triageText.split('\n').find((line) => line.startsWith('behaviour:')) ?? '',
     },
   };
 }
