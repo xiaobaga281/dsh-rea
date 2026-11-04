@@ -1,245 +1,272 @@
-# REA / dsh-rea 逆向能力评审（1.2.0 修订版）
+# REA / dsh-rea 逆向能力评审（1.3.1 版）
 
-> 评审对象：`dsh-rea` **1.2.0** 所桥接的 REA 6.7.0 工具面（207 个 MCP 工具）+ 插件自有的 4 个工具
-> 评审日期：2026-11-03
-> 证据基础：完整 `tools/list` 快照（207 条 schema，83.7 KB）、`reverse-engineer-anything` 技能及其 references、真实会话握手与 `binary_session` 返回、以及 1.2.0 插件侧实现与 71 个测试。
-> 与上一版的差别：本版重采了全部量化数据，**修正了一处误判**，并把 1.2.0 新增的插件层能力（结果落盘、变更闸门、状态工具、自更新）纳入评估——它们改变了"哪些短板还能补"的判断，也带来了新的风险面。
-> 局限：未对真实样本做全量工具回归；"缺失"结论来自 schema 语义 + 关键词穷举（已逐条核对上下文，排除 `candidate`→`ida`、`network`→`etw` 这类误命中），不代表引擎内部绝无该能力。
+> 评审对象：`dsh-rea` **1.3.1** 所桥接的 REA 6.7.0 工具面（207 个 MCP 工具）+ 插件自有 7 个工具
+> 评审日期：2026-11-04
+> 证据基础：本次重新连接真实 MCP 子进程，导出两份完整 `tools/list` 快照——① `schemaProfile=full` 输入（207 条，801 KB）；② `schemaProfile=compact` + `outputSchemaProfile=full`（207 条，2.58 MB）。逐条核对描述上下文排除误命中；并通读 1.3.1 的 `index.js`、`lib/`（triage / export / artifacts / tools / config / update / mcp-client）、119 个测试与两份已发布 Release。
+> 与 1.2.0 修订版的差别：本版不再重复"缺什么引擎"的清单，而是把**实测发现的元数据断层、闸门绕过、结果扁平化**放在首位——它们不是"没有能力"，而是"能力已经在上游存在、却被插件丢掉了"，修复成本远低于新增引擎。
+> 局限：未用真实样本做全量工具回归；"缺失"结论来自 schema 语义 + 关键词穷举（已逐条核对上下文），不代表引擎内部绝无该能力。
 
 ---
 
 ## 一、结论
 
-它仍然不是"207 个工具的拼盘"，而是一套**以证据为核心的分析工作台**：每个结论要求 observation、limitation 与 Evidence ID，未解问题必须落成带严重度与"所需权威等级"的 residual unknown，交付物可校验、可导入导出。这在同类工具里少见，也是最被低估的价值。
+它仍然不是"207 个工具的拼盘"，而是**以证据为核心的分析工作台**：每个结论要求 observation、limitation 与 Evidence ID，未解问题必须落成带严重度与所需权威等级的 residual unknown，交付物可校验、可导入导出。1.3.0 补上了"分析质量与风险边界"这层（本地初筛、Markdown/SARIF 出口、fail-closed 闸门、产物治理、自更新加固、分级提示），1.3.1 修掉了 Electron 宿主下整个插件静默不激活的致命缺陷。
 
-**1.2.0 之后，插件层从"桥接"升级为"治理层"**：结果体积、参数可见性、状态自检、变更闸门、版本自更新这五件事不再由模型自行应对。这修掉了评审里最容易量化的三类失败（上下文挤爆、空转、误改目标），但**没有触及任何一个分析能力短板**——加壳判定、TLS 解密、脚本编排、Windows 调试仍然是空白。
+**但本次重采数据推翻了 1.2.0 评审里一个乐观判断**："schema 按需可见"并没有真正解决。上游每个工具都提供完整输入 schema、完整输出 schema 与四类安全注解，插件默认把输出 schema 关闭、把输入 schema 设为 compact，并在同步时只保留 `name/description/inputSchema`。结果是：
 
-**一句话**：分析能力没变，可用性与安全性提升了一个台阶；剩下最划算的投入，全部在"REA 不做、插件能做"的空隙里。
+- **复杂工具的参数实际上不可见**：207/207 个工具的 full 与 compact 输入 schema 都不同，147 个工具的完整定义超过 compact 的 1.5 倍，最大的 `compare_web_captures` 达 165 KB；而 `rea_catalog({tool})` 在 8 000 字符处截断——等于把 95% 的嵌套结构扔掉。
+- **结果被拍平成字符串**：REA 的 `structuredContent` 带 `evidence_id`、`confidence`、`coverage`、`provider` 等字段，插件统一 `JSON.stringify` 成文本、再统一包装成 `{text:string}` 输出。上游 2.35 MB 输出 schema 全被丢弃。
+- **图像结果被丢弃**：`textOf()` 把 `image` 与无文本的 `resource` 块换成一行占位提示，18 个涉及截图/UI/视觉的工具因此只能拿文字替身。
 
----
-
-## 二、1.2.0 已落地什么（附实测与残留问题）
-
-| 项 | 做法 | 实测 | 残留问题 |
-| --- | --- | --- | --- |
-| 结果体积治理 | 超 `maxResultChars`（默认 24 000，可配 4k–200k）的结果写入 `~/.dsh/rea-artifacts/<session>/`，返回摘要 + 路径；`rea_read_artifact` 分页读（限制在产物目录内，拒绝越界） | `binary_session` 原 73 KB 不再进上下文 | 只对文本结果生效；结构化结果（`structuredContent`）走的是序列化路径；产物目录无清理策略，敏感样本内容会长期驻留磁盘 |
-| 变更审计 + 闸门 | 30 个写目标/设备/调试会话的工具写入 `audit.jsonl`；其中 4 个破坏性操作（`uninstall/install_adb_package`、`push_adb_file`、`stop_adb_app`）默认拒绝，需 `allowDeviceMutations` | 默认拒绝可用，审计落盘 | **按名字硬编码**：REA 升级后新增的写操作不会自动进闸门，这是"静默失效"型风险，需要改成按 schema/描述或前缀规则 + 未知工具默认审计 |
-| schema 按需可见 | `rea_catalog({tool:"..."})` 返回该工具完整 input schema | 13 参数的 `capture_process_scenario` 实测 6 852 字符 | 只给 input，不给 output schema；仍靠模型主动查询，不是失败时自动提示 |
-| `rea_status` | 一次调用给出目标 / provider / 引擎 / 受阻能力 | 装配验证输出完整四段 | 解析依赖 `binary_session` 的返回形状，上游改结构就会退化成"unavailable" |
-| 多镜像自更新 | 元数据 2 层（GitHub API → 仓库 `update.json` 经两个 CDN）；字节 6 层（GitHub 直连 + 5 个公共镜像，逐镜像重试）；SHA-256 校验通过才解包；`.bak` 备份 + 失败回滚 | 以 `current=1.1.0` 实测返回 1.2.0、来源 `api.github.com`、摘要一致；4 个端到端用例（替换成功 / 校验失败不动原目录 / 版本不符拒绝 / 无摘要拒绝） | 见第七节"供应链"——这是 1.2.0 引入的**最大新风险** |
-
-**顺带修掉的一个真 bug**：Git for Windows 的 GNU tar 会把 `C:\...` 的盘符当成远程主机（`Cannot connect to C: resolve failed`）。凡 PATH 里 Git 的 tar 优先于 `system32\tar.exe` 的机器，运行时解包、Ghidra、WABT、自更新四处都会失败。现已统一传正斜杠 + 失败后 `--force-local` 重试。
+**一句话**：1.3.1 的短板已从"REA 没做"转为"**上游给了、桥接层没接住，以及几处治理边界不一致**"。这是好消息——补这些不需要新引擎，也不需要动 REA。
 
 ---
 
-## 三、能力矩阵
+## 二、版本沿革与 1.3.1 现状
+
+| 版本 | 定位 | 关键变化 |
+| --- | --- | --- |
+| 1.1.0 | 重构与稳健性 | 单文件 1166 行拆成 `lib/`；增量工具同步、取消传播、原子解包、环境白名单、路由校验、49 测试 |
+| 1.2.0 | 治理层 | 结果落盘、`rea_catalog({tool})` 按需输入 schema、`rea_status`、变更闸门、六镜像自更新 |
+| 1.3.0 | 分析质量与风险边界 | `rea_triage` / `rea_export_report` / `rea_purge_artifacts`；`allowedTargets`、`sensitiveArtifacts`、保留期、`pinnedSha256`、`maxBackups`；fail-closed 分类；分级提示 |
+| 1.3.1 | 桌面端激活修复 | `childEnvironment()` 显式设置 `ELECTRON_RUN_AS_NODE=1`；补回归测试；119/119 通过 |
+
+**1.3.0 的 P0 六项确实全部落地**（详见旧版附录，本文不重复），但落地质量有三处需要注意：
+
+1. `rea_triage` 的 `nextSteps` 建议"用动态快照 / 离线 dump 的解压后镜像再跑一次初筛"，**而工具面里没有任何进程 dump / 内存 dump 工具**（本次穷举 0 命中）。建议链是断的。
+2. `rea_export_report` 的 SARIF 把 `invocations[0].executionSuccessful` 硬编码为 `true`，`artifactLocation.uri` 直接写本机绝对路径（SARIF 要求 URI 形式，且会泄漏本机目录结构）；不校验 bundle 的哈希/签名。
+3. v1.3.1 Release 说明写"设置 `ELECTRON_RUN_AS_NODE` 与 `ELECTRON_NO_ATTACH_CONSOLE`"，**代码里只有前者**（全仓库检索无后者）。发布说明与实现存在漂移，属于信任链上的小裂缝。
+
+---
+
+## 三、能力矩阵（1.3.1）
 
 成熟度：**A** 可直接投产 ｜ **B** 可用但有明确边界 ｜ **C** 仅占位或需外部补齐 ｜ **D** 缺失
 
 | 维度 | 覆盖 | 成熟度 | 关键抓手 | 主要缺口 |
 | --- | --- | --- | --- | --- |
-| 二进制格式解析 | ~30 | **A-** | `inspect_macho`、`inspect_pe_resources`、`inspect_go_binary`、`inspect_wasm_artifact`、`extract_firmware` | 无 dyld_shared_cache 解析；无文件系统镜像挂载/遍历 |
-| 证据治理 | ~20 | **A** | `export_evidence_bundle`、`verify_reconstruction`、`record_unknown`、`evaluate_reconstruction_coverage` | 仅 JSON 出口，缺 Markdown / SARIF / STIX |
-| 静态分析（native） | ~60 | **B+** | `analyze_function`、`procedure_pseudo_code`、`trace_native_values`、`set_comment`（带读回校验） | 单函数粒度；无全程序图、无 PDB/DWARF 导入、无 FLIRT 式库识别、无二进制 diff |
-| 静态分析（managed / JS / Android） | ~45 | **B** | `inspect_managed_members`、`analyze_javascript_application`、`inspect_android_method` | .NET 只到成员哈希与 IL 元组，无 C# 反编译；Android 类级仅到 smali |
-| 动态调试 | ~25 | **B-** | `start_gdb_session`（MI3）、`observe_native_calls`（LLDB）、`start_frida_session`、`execute_rizin_command` | **Windows 空白**；无内核/驱动视角；无快照回放；无进程 dump 离线分析 |
-| 协议解析 | 7 | **C+** | `inspect_packet_fields`、`inspect_packet_capture`、`decode_signal_recording` | 不能解密 TLS、不能重组流、不能定义协议；无 protobuf/gRPC/ASN.1/CBOR |
-| 自动化 / 编排 | 3 | **C** | `batch_decompile`、`capture_process_scenario`、`load_frida_script` | 无脚本沙箱、无语料批处理、无跨会话结果库、无 CI 入口 |
-| 对抗 / 反检测 | 0 | **D** | — | 无加壳判定、无熵分析、无 YARA、无反调试对抗、无内存脱壳 |
-| 插件层治理（1.2.0 新增） | 4 | **B** | `rea_catalog`、`rea_status`、`rea_read_artifact`、`rea_doctor` | 闸门靠硬编码名单；无敏感产物保留策略 |
+| 二进制格式解析 | ~30 | **A-** | `inspect_macho`、`inspect_binary_layout`（ELF 全量 RELR/符号表）、`inspect_pe_resources`、`inspect_go_binary` / `inspect_rust_binary`、`inspect_wasm_artifact` / `inspect_evm_interface`、`extract_firmware` | 无 dyld_shared_cache、无文件系统镜像挂载/遍历、无基址恢复 |
+| 证据治理 | ~20 | **A** | `export_evidence_bundle`、`verify_reconstruction`、`record_unknown`、`evaluate_reconstruction_coverage`；插件新增 Markdown + SARIF | 仅会话内；无跨会话结果库；SARIF 元数据失真（见上） |
+| 静态分析（native） | ~60 | **B+** | `analyze_function`、`procedure_pseudo_code`、`batch_decompile`（可一次传地址数组并发反编译）、`trace_native_values`、可写回且读回校验的注释/命名 | 单函数粒度；无全程序图、无 PDB/DWARF/FLIRT 导入、无结构相似度 diff |
+| 静态分析（managed / JS / Android） | ~45 | **B** | `inspect_managed_members`、`analyze_javascript_application`、`inspect_android_method`、Flutter/Dart AOT 快照 | .NET 只到成员哈希与 IL 元组；Android 类级仅到 smali |
+| 动态调试 | ~25 | **B-** | GDB MI3、LLDB 调用录制、Frida 会话生命周期、Rizin/Cutter、`inspect_recorded_crash`（Linux ELF64 core） | **Windows 全空白**（WinDbg/cdb/TTD/ETW 描述命中 0）；无内核/系统视角（eBPF/ftrace 0）；无快照回放；无进程 dump（0） |
+| 协议解析 | 7 | **C+** | `inspect_packet_fields` → `inspect_packet_capture` 的"先探再取"字段级抓包、sigrok 信号解码 | TLS keylog/解密 0；流重组仅 1 处提及；自定义 dissector 0；protobuf/gRPC/ASN.1/CBOR/MessagePack 全 0 |
+| 自动化 / 编排 | 3 | **C** | `batch_decompile`（真实并发批量）、`load_frida_script`、三个命令逃生口 | Ghidra 无脚本注入、IDA 0；插件无 playbook、无语料模式、无 CI 入口；**207 个桥接工具全部 `isConcurrencySafe:false`** |
+| 对抗 / 反检测 | 插件 1 + REA 0 | **C**（1.2.0 为 D） | `rea_triage`：熵、PE/ELF/Mach-O 节区、13 类壳签名、单字节 XOR、可选 YARA | YARA 默认未配置；无反调试/反 VM 静态特征、无多字节加密配置识别、无脱壳/内存 dump；**反检测隐蔽性不应承诺** |
+| 插件层治理 | 7 | **B** | 结果落盘 + 保留期、闸门、状态、目录清理、分级提示、多镜像自更新 | 见第五节：guard 只覆盖桥接工具；上游注解/输出 schema 未利用 |
 
-**规模事实（重采）**：207 个工具、61 个前缀组、schema 合计 83.7 KB；**55 个（27%）没有任何必填参数**，其中 10 个明确绑定"当前光标/当前文档"——headless 下不先 `open_binary` 就会报"无目标"，这是空转失败的主要来源；30 个工具会写状态；单工具参数最多 13 个。
+**规模事实（本次重采）**：207 个工具、61 个前缀组；描述合计 92 KB；输入 schema compact 84 KB / full **652 KB**；输出 schema full **2.25 MB**（均值 11 KB，最大 138 KB）；注解合计 18 KB。**55 个（27%）无必填参数**，13 个连属性都没有，其中 10 个绑定"当前光标/当前文档"——headless 下不先 `open_binary` 就会空转；单工具最多 13 参数；属性合计 570 个。
 
-**引擎耦合（description 命中，已排除误命中）**：Ghidra 24、ADB 29、Hopper 22、Frida 9、Rizin 6、GDB 5、TShark 5、JEB 4、Cutter 2、LLDB 1、**IDA Pro 0**。
-
-> **对上一版的修正**：旧版写"IDA 9"，是 `candidate`、`valid a` 之类子串的误命中。逐条核对后，工具面里**没有任何 IDA 支撑的工具**。因此"Ghidra 和 IDA 都不能注入脚本"这句话也要改：不是"不能注入"，而是**根本没接**。目前唯一的用户代码入口是 `load_frida_script`，命令逃生口是 `execute_rizin_command` / `cutter_command` / `gdb_console`。这也意味着"接 IDA"不是改造项，而是从零新增项。
+**引擎耦合（仅描述层命中，已排除子串误命中）**：Ghidra 24、Hopper 22、Frida 9、Rizin 6、GDB 5、TShark 5、ADB 6（按名称前缀的 ADB 类工具实际 29 个）、JEB 2、LLDB 1、Cutter 2、sigrok 2、**IDA Pro 0**。旧版"IDA 9"是 `candidate` 之类子串误命中，本版再次确认工具面无任何 IDA 支撑。
 
 ---
 
-## 四、分维度评审
+## 四、本次重采的新发现（按严重度排序）
 
-### 4.1 静态分析
+### 4.1 元数据断层：上游给了，桥接层丢了
 
-**做得好的**
+`tools/list` 在 `outputSchemaProfile=full` 下，207/207 个工具都带完整 `outputSchema` 与四类 `annotations`：
 
-- **函数档案化**：`analyze_function` 一次给出身份、签名、调用关系、字符串引用、伪代码与局限，比"逐个取字段"更接近分析员的思维单位。
-- **可写回且带读回校验**：`set_address_name` / `annotate_native_function` / `set_comment` 让"模型命名 → 落库 → 回归"成为闭环，而不是一次性输出。这是 LLM 辅助逆向里最实用的一环。
-- **分页视图**：`inspect_analysis_view` 把大结果按 kind 分页。
-
-**欠缺的**
-
-- **没有全程序视角**：入口全是"一个函数/一个地址"，没有整体调用图导出、类型系统导出，也没有跨函数类型传播。核心逻辑分散在十几个函数时，靠单点查询拼图效率低。
-- **符号信息不进**：无 PDB/DWARF 导入，无 FLIRT/Lumina 库识别。静态链接 OpenSSL/libcurl 时只能靠字符串与调用形态猜。
-- **没有二进制 diff**：`compare_functions` 比的是**两批 Evidence 记录**，不是两个二进制的结构相似度。补丁比对（1-day 定位）缺图同构/模糊哈希那一层。
-- **数据流只到"有界静态依赖图"**（`trace_native_values`），无跨过程指针分析，污点传播只能人工接力。
-
-**边界**：它不替你做"理解"，只整理可验证的局部事实。对混淆过的代码，反编译结果本身不可信，而它没有"反编译可信度"标注。1.2.0 的 `RESULT_GUIDANCE` 仍是两句通用提示，未按工具类型区分——对 `procedure_pseudo_code` 应强制标注"这是推断，不是源码"。
-
-### 4.2 动态调试
-
-**做得好的**
-
-- **多调试器并存且有生命周期管理**：GDB 走 MI3 解析（不是抓 stdout），Rizin 用 `-N` 抑制用户配置保证可复现，Cutter bridge 带 `expected_generation` 并发保护——都是踩过坑才有的设计。
-- **LLDB 用法克制**：`observe_native_calls` 只在"自有进程 + 指定断点"下录制调用，不开放任意表达式求值。
-- **1.2.0 起破坏性操作有闸门**：`uninstall_adb_package` 等默认拒绝。
-
-**欠缺的**
-
-- **Windows 完全没有**：无 WinDbg/cdb、无 TTD 录制回放、无 ETW。而本机就是 Windows——对 Windows 样本只剩 Frida 一条命，且 Frida 在受保护进程里容易被摘。
-- **没有内核/系统视角**：无 eBPF/ftrace（Linux）与 ETW（Windows）的系统调用级观测，只有 `read_adb_logcat` 这类设备日志。
-- **没有快照与回放**：调试线性、不可重放；`capture_process_scenario` 能"记录一次"，但缺"回到第 N 条指令"。
-- **没有内存取证链路**：不能 dump 进程再离线分析（`inspect_recorded_crash` 只吃 core，且限定 Linux ELF64）。
-- **移动端只到"能用"**：ADB 侧 29 个工具齐全，但需设备已连、Frida server 已起；无 AVD 编排；iOS 侧缺 dyld cache / class-dump 配套。
-
-### 4.3 协议与二进制解析
-
-**做得好的**
-
-- **二进制格式深度**：Mach-O 到 slice/load command/权限/签名/entitlements；PE 到资源树与 .NET 的 ModuleRef/ImplMap/非 IL 方法；Go/Rust 取构建元数据与依赖清单；WASM 做类型级接口比较；EVM 静态解析 selector。这是它最扎实的部分。
-- **字段级抓包**：先 `inspect_packet_fields` 发现协议/字段，再 `inspect_packet_capture` 按选择取值，"先探再取"避免整包入上下文。
-
-**欠缺的**
-
-- **不能解密**：无 TLS keylog 注入，HTTPS 目标只能看握手。这是恶意样本分析最大的单点阻碍。
-- **不能重组流**：只能取"第 N 帧的某字段"，没有"这条 TCP 流的应用层消息序列"，也没有 HTTP/2、WebSocket 边界。
-- **不能定义协议**：无自定义 dissector，无从样本反推字段边界的工具。
-- **序列化缺一整块**：protobuf（无描述符提取、无 `--decode_raw` 封装）、gRPC、ASN.1、CBOR、MessagePack、Java 序列化都没有。
-- **固件只到"切出来"**：Unblob 能解包，但无文件系统挂载/遍历、无基址恢复、无 RTOS 识别。
-
-### 4.4 自动化与脚本
-
-**现状**：`batch_decompile` 是唯一的"批量"原语；`execute_rizin_command` / `cutter_command` / `gdb_console` 是三个命令逃生口；`load_frida_script` 是唯一用户代码入口。Ghidra 无脚本注入，IDA 未接入（见上文修正）。
-
-**这意味着**：一个"反编译 300 个函数 → 按调用特征筛出解密例程 → 批量改名"的任务，只能由模型发起约 300 次调用，每轮带上下文成本，且不可复现、不可回归。**这是当前工作流最大的效率瓶颈**，1.2.0 的结果落盘只缓解了单条结果的体积，没有减少调用次数。
-
-**另外缺**：无语料模式（一次处理一个目录/一批样本）、无结果持久化（证据只活在会话里）、无 CI 入口。
-
-### 4.5 对抗与反检测
-
-**结论：仍为零。** 1.2.0 未触及此维度。关键词穷举确认：`entropy`、`packer`、`obfuscat`、`yara`、`unpack`、`anti-debug` 在 207 条描述里均无命中（`packed` 仅出现在 `search_strings` 的"Ghidra 可能漏掉 packed 字面量"里）。
-
-缺的是逆向工程最前面的十分钟：加壳了吗（熵、节区名、导入表规模、入口点异常）？什么壳（VMProtect/Themida/.NET Reactor/ConfuserEx 指纹）？有无反调试/反虚拟机（PEB、时序、CPUID、进程名）？字符串是否加密（编码识别、XOR 爆破）？
-
-没有这些，后面的 Ghidra 分析会在"一堆无法解释的跳转"里空转。**这仍是投入产出比最高的一块空白**，因为它不依赖任何重型引擎。
-
----
-
-## 五、短板归因：哪些是 REA 的，哪些是本插件的
-
-| 短板 | 归属 | 插件能否补 |
+| 注解 | 分布 | 插件当前用法 |
 | --- | --- | --- |
-| 无 Windows 调试器 | REA 工具面 | 能（插件自带 cdb/TTD 桥，作为独立工具注册） |
-| 无脚本编排 | REA | 能（playbook 子进程沙箱，把多次 MCP 调用压成一次） |
-| 无加壳/混淆/YARA | REA | 能（纯本地静态检查，不需要引擎） |
-| 无 TLS 解密/流重组 | REA | 能（自带 tshark 封装：`-o tls.keylog_file` / `-z follow`） |
-| 无 protobuf/ASN.1 | REA | 能（`protoc --decode_raw` / `asn1tools` 包装） |
-| 无语料/跨会话结果 | REA | 能（SQLite 索引 + 批量编排） |
-| 未接 IDA | REA | 能但成本高（需新增 idalib/python 桥，属"新引擎"） |
-| 单函数粒度、无全程序图 | REA 引擎 | **不能**（要改 Ghidra 侧插件） |
-| 无符号执行/仿真脱壳 | REA 引擎 | 部分（外接 angr/Qiling，是新增引擎而非补能力） |
-| 无二进制相似度 | REA 引擎 | 部分（BSim/Diaphora 需另装） |
+| `readOnlyHint` | true **5** / false **202** | 未使用 |
+| `destructiveHint` | true **31** | 未使用 |
+| `idempotentHint` | false **40** | 未使用 |
+| `openWorldHint` | true **100** | 未使用 |
 
-**结论**：插件层能补的是"**编排、预处理、交付、安全**"四类，覆盖 10 条短板中的 7 条，且都不需要动 REA。1.2.0 已经证明了这条路走得通（四类里的"安全"已完成一半）。
+**注意不要把 `readOnlyHint` 当权威分类器**：REA 对 202/207 保守地给了 `false`（连 `list_names`、`read_bytes` 都是 false），直接采用会把只读工具全判成写操作。插件自研的四路 fail-closed 分类器（实测 45 个变更类 = 4 破坏性 + 41 审计，162 个只读）精度明显更高。正确用法是**把注解当保守下限信号**：`destructiveHint=true` 与 `openWorldHint=true` 用来触发"额外审计/外部副作用提示"，而最终分类仍以插件规则为准。
+
+### 4.2 闸门的实际漏洞：5 个命令逃生口被判为只读
+
+交叉比对发现，上游标 `destructiveHint=true` 但插件判为**只读**的恰好 5 个，且都是任意命令/实时执行面：
+
+`gdb_console`、`rizin_debug_command`、`cutter_command`、`observe_native_calls`、`observe_web_execution`
+
+它们不进 `audit.jsonl`、不受 `destructive` 闸门约束。`execute_rizin_command` 与 `instrument_with_frida` 已被 1.3.0 补抓，这 5 个是同类漏网。
+
+### 4.3 授权范围可绕过：guard 只挂在桥接工具上
+
+`index.js` 的 `guardTool()` 只作为 `buildTool()` 的参数传给 207 个 REA 工具；7 个插件自有工具直接 `ctx.tools.register(...)`，**完全不走 guard**。后果：
+
+- 配置了 `allowedTargets` 的会话，仍可用 `rea_triage({path:'C:/任意/文件'})` 或 `rea_export_report({path:...})` 读取授权根之外的任意绝对路径文件；
+- `rea_purge_artifacts` 删除文件不写审计；
+- `rea_read_artifact` 的路径限制只靠自身实现，与会话策略不统一。
+
+这是 1.3.0 新增边界时产生的不一致，属于"策略看似生效、实际有旁路"。
+
+### 4.4 结果扁平化 + 视觉能力丢失
+
+`buildTool()` 把所有结果归一成 `{text:string}`，`textOf()` 对 `image` 块写入 `[image result not forwarded]`、对二进制 `resource` 写入占位串。18 个涉及截图/UI/视觉的工具（`capture_adb_screen`、`capture_web_screenshot`、`compare_web_screenshots`、`observe_native_ui`、`capture_electron_scenario`、`inspect_electron_page` 等）因此无法把画面交给多模态模型，也不能保存原始图供复核。同时 `structuredContent` 的置信度、覆盖度、Evidence ID 被当作普通文本，无法做置信度分级或结构化检索。
+
+### 4.5 参数可见性没有真正解决
+
+- `schemaProfile=compact`（默认）会把嵌套对象压成不透明的 `object`：例如 `compare_functions` 的 `left/right`、`inspect_analysis_view` 的 `source/view` 只剩一个 `type: object`，而 full 版本里含 `evidence_id` 正则、枚举、必填嵌套字段。
+- 207/207 个工具的两种 schema 都不同，147 个工具完整定义超过 compact 的 1.5 倍。
+- `rea_catalog({tool})` 在 8 000 字符截断：最大的 `compare_web_captures` 完整输入 schema 165 KB，等于只给到 5%。
+
+**成本对照**：完整输入 schema 652 KB + 输出 schema 2.25 MB + 注解 18 KB ≈ 2.9 MB，全部可以只驻留宿主内存（不进模型上下文）；按需返回单个工具平均 11 KB。这是一个"零上下文成本、纯内存"的改进。
+
+### 4.6 并发被无条件串行化
+
+207 个桥接工具一律 `isConcurrencySafe: () => false`。REA 自己的 `batch_decompile` 是并发的，但插件层的批量编排/语料模式一旦实现，仍会被宿主排队。162 个只读工具完全可以放开。
+
+### 4.7 1.3.1 暴露的新风险类别：宿主环境耦合的静默失效
+
+1.1.0 引入环境白名单 → 桌面端子进程以 GUI 模式启动并立即退出 → `apply()` 提前返回 → 路由与 207 工具全部缺席。这个缺陷**从 1.1.0 一直潜伏到 1.3.0 发布后用户重启桌面端才暴露**，因为期间所有验证都在纯 Node 假宿主上做。它说明：插件层的任何环境/路径假设都可能在特定宿主下静默失效，而当前发布门禁里没有宿主矩阵。
 
 ---
 
-## 六、前沿思路与潜在改进点
+## 五、分维度评审
 
-1. **Decompiler-in-the-loop 的语义标注**。已有"命名 + 读回"，缺"命名提案—证据—批量应用—回归"闭环。让模型基于 `analyze_function` 的结构特征产出**带置信度的命名提案**，由 playbook 批量写回并记录 diff。
-2. **假设驱动的分析**。`record_unknown` 提供了骨架，但"谁来产生假设"仍靠人。可从证据缺口自动生成候选假设（例如"存在未被引用的高熵数据段 → 疑似加密配置"），把未知列表变成待办队列。
-3. **差分优先**。与其从零读一个样本，不如"同族两版本做函数级差分 → 只看变化点"。JS 侧有 `compare_application_versions`，native 侧缺结构相似度；可先用"函数规模/调用签名/字符串集"粗配再交人确认。
-4. **协议状态机学习**。当前只能取字段；前沿是从多条流反推消息边界与状态迁移。对 IoT 与 C2 分析价值很高。
-5. **抗对抗前置**。把"是否加壳/是否反调试"作为第一等公民，决定后续走静态还是动态、走 Ghidra 还是先脱壳。
-6. **证据的机器可读交付**。Evidence bundle 已是 JSON，缺 SARIF（给 CI）、STIX（给威胁情报）、Markdown（给人）三种出口。
-7. **证据库而非证据会话**。把 Evidence/unknown 落 SQLite，使分析可跨会话复用、可做回归基线——这也是"模型辅助逆向"能否工程化的分水岭。
+### 5.1 静态分析
+
+**优势**：`analyze_function` 以函数为分析单位一次给出身份、签名、调用关系、字符串引用、伪代码与局限；命名/注释可写回且读回校验，是 LLM 辅助逆向里最实用的一环；`batch_decompile` 支持一次传入地址数组并发反编译（旧评审低估了它）；`inspect_binary_layout` 对 ELF 的符号/RELR/原始名字节覆盖很深；制品解析（Mach-O 权限与 entitlements、PE 资源与 .NET 混合体、Go/Rust 构建元数据、WASM 接口比较、EVM selector）接近商业水准。
+
+**欠缺**：无全程序视角（无整体调用图导出、无类型系统导出、无跨函数类型传播）；无 PDB/DWARF/FLIRT/Lumina；`compare_functions` 比的是两批 Evidence 记录，不是两个二进制的结构相似度，1-day 定位仍缺图同构/模糊哈希；`trace_native_values` 只到有界静态依赖图，无跨过程指针/污点分析。
+
+**1.3.0 新增的 triage 边界（读源码确认）**：只解析 PE/ELF/Mach-O 三种容器的极少数字段，DEX/APK、WASM、.NET 单文件、固件一律 `format:'unknown'`，此时只剩熵/壳签名/XOR 三个信号，安装程序与压缩资源容易误报；13 类壳签名找明文字符串，新版 VMProtect/Themida 常无明文；XOR 只探测前 64 KB 的单字节英文 marker，多字节/RC4/AES 配置、栈字符串、控制流平坦化、不透明谓词均未覆盖；无反调试/反 VM 静态特征（PEB、CPUID、时序、进程名）、无签名/证书与编译时间戳异常、无 overlay 检查；只读 64 MB 且截断不重新采样；加权启发式没有校准数据集。**它是合格的前十分钟分流器，不是检测器，不能当免检结论。**
+
+**边界**：反编译结果本身不可信，插件已按工具类型强制标注"推断，非源码"——这条做对了；但样本字符串进上下文带来的间接提示注入风险（见第七节）尚未处理。
+
+### 5.2 动态调试
+
+**优势**：多调试器并存且有生命周期管理（GDB 走 MI3 解析、Rizin `-N` 抑制用户配置、Cutter 带 `expected_generation` 并发保护）；LLDB 用法克制；破坏性设备操作有闸门；`inspect_recorded_crash` 能离线读 Linux core 的全部 PRSTATUS/SIGINFO 字段。
+
+**欠缺**：Windows 完全空白（本机就是 Windows，对 Windows 样本只剩 Frida 一条命，且受保护进程里容易被摘）；无内核/系统视角（ETW、eBPF/ftrace）；无快照回放（`time-travel/replay` 描述命中 1 处且是 Web 抓包快照，不是指令级回放）；**无进程/内存 dump**（0 命中）——这既让 triage 的建议链断掉，也让"脱壳后重跑初筛"无法执行；移动端需设备已连、Frida server 已起，无 AVD 编排。
+
+### 5.3 协议与二进制解析
+
+**优势**：二进制格式深度是全套工具最扎实的部分；字段级抓包"先探再取"避免整包入上下文；sigrok 信号解码是少见的硬件侧补充。
+
+**欠缺**：不能解密（TLS keylog 0）、不能重组流（仅 `inspect_packet_capture` 一处提及 follow）、不能定义协议（dissector 0）；protobuf/gRPC/ASN.1/CBOR/MessagePack/Java 序列化整块缺失；固件只到"切出来"，无文件系统挂载/遍历、无基址恢复、无 RTOS 识别。**这是二进制解析 A- 与协议解析 C+ 的巨大落差**，也是 C2/IoT 分析里最常卡住的地方。
+
+### 5.4 自动化与脚本
+
+**现状**：`batch_decompile` 是唯一的批量原语；`execute_rizin_command` / `cutter_command` / `gdb_console` 是三个命令逃生口；`load_frida_script` 是唯一用户代码入口；Ghidra 无脚本注入、IDA 未接。插件侧无 playbook、无语料模式、无结果库、无 CI 入口，且 207 个工具全被串行化。
+
+**影响**：一个"反编译 300 个函数 → 按调用特征筛出解密例程 → 批量改名 → 导出证据"的任务，仍需要模型发起大量往返、不可复现、不可回归；1.2.0 的结果落盘只缓解单条体积，1.3.0 的 SARIF 出口只解决交付，都没减少编排成本。**这仍是工作流最大的效率瓶颈。**
+
+### 5.5 对抗与反检测
+
+从 1.2.0 的 **D** 升到 **C**：`rea_triage` 是纯本地、不执行样本的初筛，输出带证据的判定与置信度，方向正确且零引擎依赖。
+
+**仍然缺**：YARA 需外部二进制 + 用户自备规则目录（默认 `not-configured`）；无反调试/反 VM 静态特征；无多字节加密配置提取；无脱壳与内存 dump；无控制流混淆识别；无"当前调试手段是否会被检测"的提示。**明确边界**：本插件不提供、也不应承诺隐蔽注入能力；"反检测"维度应理解为"识别样本的保护手段并选择合适路径"，不是"让调试器不被发现"。
 
 ---
 
-## 七、风险边界
+## 六、短板归因
 
-**原来就有的五条**
+| 短板 | 归属 | 插件能否补 | 本轮建议 |
+| --- | --- | --- | --- |
+| 元数据断层（schema/注解/结构化结果） | **插件桥接层** | 能，纯内存 | **P0-1** |
+| 闸门漏 5 个命令口 / guard 只覆盖桥接工具 | **插件桥接层** | 能 | **P0-2** |
+| 图像与二进制资源被丢弃 | **插件桥接层** | 能（落盘 + 条件转发） | **P0-3** |
+| 间接提示注入面 | **插件桥接层** | 能 | **P0-4** |
+| 宿主兼容性门禁 | **插件发布流程** | 能 | **P0-5** |
+| triage 校准与建议链 | **插件自有能力** | 能 | **P0-6** |
+| 无脚本编排 / 语料 / 结果库 | REA + 插件 | 能（playbook + SQLite） | P1 |
+| 无 TLS 解密 / 流重组 / 序列化解析 | REA | 能（自带 tshark/protoc 封装） | P1 |
+| Windows 调试 / 系统级观测 | REA | 能但需新增引擎桥 | P1/P2 |
+| 单函数粒度、无全程序图 / 符号 | REA 引擎 | **不能**（要改 Ghidra 侧） | 排除 |
+| 仿真脱壳 / 符号执行 / 二进制相似度 | REA 引擎 | 部分（新增引擎） | P2 |
+| IDA 接入 | REA | 能但成本高 | P2 |
 
-1. **授权边界**。工具面含 Frida 注入、GDB 任意命令、ADB 装卸载、进程 PTY 执行——完整的代码执行面。应记录"授权目标范围"，并在越界路径/设备上拒绝。1.2.0 只对 4 个操作做了硬闸门，范围授权仍未实现。
-2. **变更型操作**。30 个工具会写目标。**闸门目前是硬编码名单**，REA 升级新增的写操作不会自动纳入——这是"静默失效"型风险，与本次评审在 1.1.0 里抓到的那类问题同构。建议改为：未知写操作默认审计 + 按描述/`isReadOnly` 推断。
-3. **供应链**。28 MB、136 个包的闭包没有 SBOM，也没有 npm provenance；Ghidra 从网络下载（虽校验 SHA-256）。上游被投毒则原样执行。
-4. **数据外泄**。反编译结果、字符串、配置、密钥都进模型上下文。对企业样本等于把分析对象上传，需要"敏感产物不出本机"的策略（本地模型 / 脱敏 / 只回摘要）。**1.2.0 的产物落盘让这个问题从"传输中"延伸到"静态存储"**：`~/.dsh/rea-artifacts/` 会长期保留完整反编译结果，目前无保留期、无清理、无加密。
-5. **目标可检测性**。Frida、GDB、Rizin 都会被反调试识别。**不要承诺隐蔽性**；应提供"当前是否会被检测"的提示与"改用快照/离线分析"的建议。
-6. **模型幻觉**。反编译代码上的推断极易被写成事实。REA 的 Evidence 模型是对的解药，但插件侧仍是两句通用提示，未按工具类型分级。
+**结论**：最划算的六项全部在插件桥接层，不动 REA、不进模型上下文、不改协议，且每项都有可量化的验收。
 
-**1.2.0 新增的两条**
+---
 
-7. **自更新的信任链**。下载走 5 个**第三方镜像**，完整性只由"Release 说明里公布的 SHA-256"保证——镜像只当传输通道，这点设计正确；但**摘要与归档同源**（都来自同一个 GitHub 仓库/账号），账号或 Release 被篡改时校验形同虚设。缓解：摘要应随发布清单签名（或至少在 `update.json` 之外提供独立通道），并允许运维在配置里**钉死**期望摘要；无公布摘要时当前实现直接拒绝，这条要保持。
-8. **目录替换的破坏半径**。更新会把整个插件目录改名 `.bak-<时间戳>` 再换入新目录，失败自动回滚。风险点有两个：一是**备份目录会累积**（每次更新留一份 26 MB+ 的完整副本，含 28 MB 运行时归档），目前只保留最近一份但无大小上限；二是**替换发生在宿主加载期间**，已加载的模块不会重新读取，必须重启会话——UI 已提示，但没有强制，用户可能以为已生效。
+## 七、前沿思路与风险边界
+
+**前沿思路（与本项目相关的部分）**
+
+1. **结构化证据图谱**：把 `structuredContent` 的 `evidence_id / confidence / coverage / provider` 与输出 schema 一起沉淀成可查询结果库，让"假设 → 取证 → 验证 → 回归"形成闭环，而不是每次会话从零开始。这是 agentic 逆向能否工程化的分水岭。
+2. **渐进式 schema 披露（progressive disclosure）**：不在上下文里塞 2.9 MB schema，而是缓存完整定义、按 JSON Path 按需展开。对 165 KB 的复杂工具尤其关键。
+3. **置信度校准的语义命名**：`analyze_function` + 批量命名 + 读回校验 + 置信度提案，把 LLM4Decompile 类能力落到可验证的写回闭环，而非让模型直接改结论。
+4. **差分优先 / 1-day**：先用函数规模、调用签名、字符串集粗配，再交人确认；BSim/Diaphora 属后一步。
+5. **协议状态机推断**：从多条流反推消息边界与状态迁移，比逐帧取字段高一个层次；对 C2/IoT 价值高。
+6. **仿真与符号执行选路**：Qiling/Speakeasy 定位 OEP、angr 做路径约束，处理 VM 保护与自解压样本。
+7. **多模态取证**：截图/UI 树进视觉模型，与 `observe_native_ui` 的文字事实交叉验证——前提是桥接层不再丢弃图像块。
+8. **可信发布**：Sigstore/minisign 对 `update.json` 签名，把信任锚从"同一账号里的摘要"移到独立可验证的密钥。
+
+**风险边界**
+
+1. **授权与目标范围**：工具面含任意命令执行、Frida 注入、ADB 装卸载，`allowedTargets` 目前有旁路（4.3）。必须"所有工具、包括插件自有工具"统一走策略。
+2. **代码执行面未完全审计**：5 个命令逃生口在闸门之外（4.2）；`destructiveHint=true` 的 31 个里还有 `export_evidence_bundle`、`close_binary` 等被上游保守标记，不能简单照抄，但可作为"需额外审计"的信号集合。
+3. **间接提示注入（新增，此前两版未提）**：二进制里的字符串、反编译文本、网页 DOM 都是攻击者可控内容，会直接进入模型上下文；`rea_triage` 默认输出 20 条字符串样本、`rea_export_report` 把 observation 原文写进报告。`"ignore previous instructions"` 这类载荷可劫持分析流程。缓解：把样本内容当不可信数据，默认只回计数/长度/哈希，完整内容放 artifact 并加隔离标记；报告渲染时转义而非原样拼接。
+4. **推断可信度**：反编译与重建是推断。分级提示已落地，但 `invocations.executionSuccessful: true` 硬编码与绝对路径 URI 会让机器可读交付物失真，等于把不确定性洗掉。
+5. **数据外泄与静态驻留**：反编译结果、字符串、密钥进模型上下文；产物落盘有 7 天保留期与 256 MB 上限、`sensitiveArtifacts` 可只回摘要，但**进入模型上下文的那部分仍未脱敏**（企业样本等于上传分析对象）。
+6. **供应链**：六镜像只当传输通道（设计正确），SHA-256 来自 Release 说明或 `update.json`，`pinnedSha256` 把信任锚移到本地配置；但**摘要与归档仍同源**（同一账号/仓库），账号被篡改时校验形同虚设。28 MB 运行时闭包仍无 SBOM/provenance。发布说明与实现漂移（2.3）也是同一类问题。
+7. **目标可检测性**：Frida/GDB/Rizin 都会被反调试识别，**不要承诺隐蔽性**；应提供"是否易被检测"提示与"改用离线/快照路径"建议。
+8. **宿主环境耦合（新增）**：1.3.1 的教训——环境白名单、路径假设、平台相关解包都可能在特定宿主下静默失效，且假宿主测试发现不了。发布门禁需要宿主矩阵。
+9. **模型幻觉**：Evidence 模型是对的解药，但结构化元数据被拍平后，模型无法自动区分"置信度 0.4 的推断"与"已验证事实"，只能靠提示词。
 
 ---
 
 ## 八、可落地方案
 
-排序原则：**先降成本与风险（P0）→ 再把人工流程自动化（P1）→ 最后引入新引擎（P2）**。P0 全部在插件层，不改 REA。
+排序原则：**先把上游已有的东西接住、把边界补齐（P0）→ 再自动化工作流（P1）→ 最后引入新引擎（P2）**。P0 全部在插件桥接层，不改 REA、不增加上下文预算。
 
 ### P0 · 下一迭代（1–2 周）
 
 | # | 改进 | 具体做法 | 预期效果 | 验收 |
 | --- | --- | --- | --- | --- |
-| 1 | **静态对抗初筛（插件自实现）** | 熵/节区异常/导入表规模/入口点异常 → 加壳初判；字符串 + 编码识别 + XOR 爆破；YARA 规则目录扫描。纯本地，零引擎依赖 | 补上 REA 完全缺失的"前十分钟"；triage 从分钟级到秒级 | 20 个已知壳样本识别率 ≥70%，误报 ≤10% |
-| 2 | **证据出口** | Evidence bundle → Markdown 报告 / SARIF，附覆盖度与未解未知清单 | 交付物可读可审计，能接 CI | 一条命令产出可直接归档的报告 |
-| 3 | **闸门去硬编码** | 改为按 schema/`isReadOnly`/前缀推断 + 未知写操作默认审计；配置里支持"会话级授权目标范围" | 消除"上游升级后闸门静默失效" | 注入一个伪造的新写操作工具，验证被审计且被拦 |
-| 4 | **产物目录治理** | 保留期（默认 7 天）+ 容量上限 + `rea_purge_artifacts`；敏感标记样本可选只回摘要不落盘 | 解决"敏感反编译结果长期驻留磁盘" | 到期自动清理，越界读取仍被拒 |
-| 5 | **自更新加固** | 配置支持 `pinnedSha256`；备份保留份数上限；镜像失败原因可观测（面板显示每个镜像的结果） | 更新链路可审计、可钉死、可诊断 | 钉死摘要后，摘要不符的发布被拒绝且给出明确提示 |
-| 6 | **按工具类型分级提示** | `procedure_pseudo_code` 等推断类结果强制标注"反编译推断，非源码"；写操作结果标注"已审计" | 降低幻觉被当作事实的概率 | 抽样 10 个推断类工具，输出均带标注 |
+| 1 | **元数据与结构化结果管线** | 激活时以 `schemaProfile=full` + `outputSchemaProfile=full` 拉一次 `tools/list`，缓存完整输入/输出 schema 与 `annotations`（约 2.9 MB，仅内存）；对外仍注册 compact 轮廓。`rea_catalog` 增加 `path` 参数按 JSON Path 渐进展开、`includeOutput` 返回输出 schema 与安全注解；`buildTool` 从 `structuredContent` 抽出 `evidence_id/confidence/coverage/provider` 写 sidecar JSON | 复杂工具参数从"猜"变"可查"；结果可验证、可检索、可按置信度分级；单次按需约 11 KB，**上下文零增长** | 对 `compare_functions`、`compare_web_captures` 能查到嵌套必填字段与 evidence_id 正则；抽查结果 sidecar 含置信度字段 |
+| 2 | **闸门统一化** | 把 5 个命令逃生口加入审计/变更分类；`guardTool` 应用到全部 7 个插件自有工具（`rea_triage` / `rea_export_report` 的路径参数走 `allowedTargets`，`rea_purge_artifacts` 写审计）；用 `destructiveHint` / `openWorldHint` 作保守下限信号而非唯一依据 | 消除授权旁路；任意命令执行面可审计；上游新增工具的外部副作用有提示 | 注入 5 个工具名验证被审计；`allowedTargets` 下用 `rea_triage` 读越界路径被拒；162 个只读工具无误拦 |
+| 3 | **图像/二进制结果落地** | `textOf()` 遇到 `image` / `resource.blob` 时写入 artifact 目录（`.png` / `.bin` + 哈希），返回路径、尺寸、mimeType 与摘要；宿主支持时额外转发 image block | 18 个视觉相关工具从"不可用"变"可用"，截图/UI 分析可参与且原始证据可复核 | 对 `capture_web_screenshot` 类调用产生落盘文件与可回访路径，不进上下文的图片不丢 |
+| 4 | **不可信数据隔离** | 样本字符串/反编译文本标为 untrusted：`rea_triage` 默认只回字符串计数、编码分布与前 N 条长度，完整内容放 artifact；`rea_export_report` 渲染时转义控制序列与类指令文本，报告头部写明"以下为不可信样本内容" | 降低样本内嵌提示词劫持分析流程的风险 | 构造含 `"ignore previous instructions"` 的样本，验证不进入可直接执行的提示位置 |
+| 5 | **宿主兼容性发布门禁** | 发布前跑矩阵：纯 Node / Electron `ELECTRON_RUN_AS_NODE` × Windows / Linux，各执行一次真实 `apply` + 握手 + `/rea/environment`；任一失败即阻断发布 | 杜绝 1.3.1 那类"代码没问题但宿主静默失效" | 门禁脚本纳入 `npm test` 或发布脚本，四种组合全绿 |
+| 6 | **triage 校准与建议链闭合** | 建 20–50 个已知壳/未壳/安装程序样本的判定基线，输出可公布的识别率与误报率；补 DEX/APK/WASM 容器识别、overlay 与证书/时间戳异常；`nextSteps` 只推荐工具面里真实存在的动作，并把"dump 后重跑"换成可执行的 `open_binary` / `binary_session` / `inspect_analysis_view` 路径 | 初筛结论从"启发式声明"变"有校准指标"，建议可执行 | 基线报告落库；误报率可量化；`nextSteps` 里每个工具名都能在 207 清单里查到 |
 
 ### P1 · 3–6 周（结构性改进）
 
 | # | 改进 | 具体做法 | 预期效果 |
 | --- | --- | --- | --- |
-| 7 | **Playbook 沙箱（最高价值）** | 子进程 + 权限最小化隔离；暴露 `rea.call(tool,args)` / `artifact` / `log`；`rea_run_playbook(name, input)` 一次执行整段脚本，产物写 artifact 目录 | 把"300 次模型往返"压成"1 次调用 + 1 段脚本"；批量反编译/改名/导出成为确定性、可回归的流水线 |
-| 8 | **语料模式 + 结果库** | `rea_batch_triage(dir)`；样本/函数/证据/未知写入 `~/.dsh/rea-artifacts/rea.db`（SQLite），跨会话可查 | 500 样本可跑；分析结果可复用、可回归 |
-| 9 | **原生版本差分编排** | 组合 `analyze_function` + `compare_functions`，按函数规模/调用签名/字符串集粗配，输出"疑似补丁点"候选 | 1-day 定位从数小时人工到候选列表 |
-| 10 | **协议补强** | 自带 tshark 封装：`-o tls.keylog_file`、`-z follow,tcp/http2`、`http.file_data` 导出；`protoc --decode_raw` / `asn1tools` 包装 | 补上 TLS 解密与流重组，覆盖 HTTPS/gRPC 主流目标 |
-| 11 | **Windows 动态补齐** | 接 `cdb -c` 脚本化断点与 `ttd` 录制回放，作为插件自有工具注册 | Windows 从"只能用 Frida"到"断点 + 回放" |
+| 7 | **只读工具并发 + Playbook 沙箱** | 先用 P0-2 的分类结果把 162 个只读工具设为 `isConcurrencySafe:true`；再用子进程（非 `node:vm`）跑可信脚本，暴露 `rea.call` / `artifact` / `log`，`rea_run_playbook` 一次执行整段 | 批量反编译/改名/导出从"几百次往返"压成"1 次调用 + 1 段脚本"，确定性、可回归；并发放开后吞吐显著提升 |
+| 8 | **证据/结果库 + 语料模式** | 把 sidecar 元数据、Evidence、unknown、样本哈希写入 `~/.dsh/rea-artifacts/rea.db`（SQLite）；`rea_batch_triage(dir)` 一次处理目录；跨会话检索与回归基线 | 500 样本可跑；分析可复用、可比对、可审计 |
+| 9 | **协议补强** | 自带 tshark 封装（`-o tls.keylog_file`、`-z follow,tcp/http2`、`http.file_data`）；`protoc --decode_raw` / `asn1tools` 包装；自定义 dissector 描述文件 | 补上 TLS 解密、流重组与主流序列化，覆盖 HTTPS/gRPC/IoT 目标 |
+| 10 | **原生差分优先编排** | 组合 `batch_decompile` + `compare_functions`，按函数规模/调用签名/字符串集粗配，输出"疑似补丁点"候选 | 1-day 定位从数小时人工缩短到候选列表 |
+| 11 | **Windows 动态与系统观测** | 接 `cdb -c` 脚本化断点、TTD 录制回放；ETW/eBPF 系统调用级观测，作为插件自有工具注册 | Windows 从"只能 Frida"到"断点 + 回放 + 系统视角"；注意只在授权目标上启用 |
+| 12 | **SARIF 修正** | `executionSuccessful` 取真实状态；`artifactLocation.uri` 转 `file:///` 或相对 URI；target 附 SHA-256；导出清单签名 | 交付物不再失真，可安全接 CI |
 
-### P2 · 2–3 月（引入新引擎，能力跃迁）
+### P2 · 2–3 月（能力跃迁）
 
 | # | 改进 | 说明 | 预期 |
 | --- | --- | --- | --- |
-| 12 | 符号执行 / 仿真脱壳 | 外接 angr（路径约束）与 Qiling/Speakeasy（OEP 定位、API 追踪） | 能处理 VM 保护与自解压样本 |
-| 13 | 二进制相似度 | Ghidra BSim / Diaphora 导出函数指纹，跨样本聚类 | 家族归类、1-day 批量匹配 |
-| 14 | 反对抗 | 反调试/反虚拟机检测（PEB、时序、CPUID）+ ScyllaHide 类隐藏配置生成 | 受保护样本可调试 |
-| 15 | IDA 接入 | idalib / IDAPython 桥（当前工具面 0 覆盖，属从零新增） | 补齐商业反编译器生态与脚本能力 |
-| 16 | Fuzz harness 生成 | 从 `inspect_recorded_crash` 反向生成 AFL++/libFuzzer 模板，崩溃去重 | 从"读懂"走到"打穿" |
+| 13 | 仿真脱壳 / 符号执行 | Qiling/Speakeasy 定位 OEP + API 追踪，angr 做路径约束选路 | 能处理 VM 保护与自解压样本，补上 triage 之后断掉的那一段 |
+| 14 | 二进制相似度 | Ghidra BSim / Diaphora 导出函数指纹，跨样本聚类 | 家族归类、1-day 批量匹配 |
+| 15 | 反调试/反 VM 静态特征 | PEB、CPUID、时序、进程名、虚拟机 artifact 指纹 → 生成"调试风险提示"与离线路径建议 | 受保护样本选择合适路径，不承诺隐蔽性 |
+| 16 | IDA 接入 | idalib / IDAPython 桥（当前 0 覆盖，属从零新增） | 补齐商业反编译器生态与脚本能力 |
+| 17 | 多模态取证 | 落盘的截图接视觉模型，与 UI 树文字事实交叉验证 | UI 混淆、图表型反混淆可参与分析 |
+| 18 | Fuzz harness + 签名发布 | 从 `inspect_recorded_crash` 生成 AFL++/libFuzzer 模板；`update.json` 用 minisign/Sigstore 签名 | 从"读懂"走到"打穿"；信任锚独立于仓库账号 |
 
-### 不建议做（明确排除）
+### 明确不做
 
-- **不要把 207 个工具合并成 `rea_run(tool, input)`**：会摧毁 schema 可见性，模型必须猜参数。当前 `deferLoading` + `rea_catalog` 是更好的解。
-- **不要在插件里内置"隐蔽注入"能力**：既是法律风险，也会让工具被 AV/EDR 标记，反而降低可用性。
-- **不要用 `node:vm` 当安全边界**：它不是沙箱。playbook 必须被声明为"可信代码"，用子进程 + 权限最小化隔离。
-- **不要让镜像承担完整性**：镜像只做传输，摘要必须来自独立可验证的来源，且允许运维钉死。
+- **不要把 207 个工具合并成 `rea_run(tool, input)`**：会摧毁 schema 可见性。`deferLoading` + 渐进式 `rea_catalog` 才是正解。
+- **不要用 `readOnlyHint` 直接替换分类器**：202/207 都是 false，会造成 202 个误拦；只作保守下限信号。
+- **不要内置"隐蔽注入"能力**：法律风险 + 被 AV/EDR 标记，反而降低可用性。
+- **不要用 `node:vm` 当安全边界**：playbook 必须声明为可信代码并用子进程隔离。
+- **不要让镜像承担完整性**：镜像只做传输；摘要需独立通道，且允许运维钉死。
+- **不要在未校准前把 `rea_triage` 结论当免检依据**：它是分流器，不是检测器。
 
 ---
 
 ## 九、一句话总结
 
-**它是一个"把证据管好"的静态分析工作台；制品解析接近商业水准，动态偏 Linux/macOS 且 Windows 为空白，自动化与对抗是明显洼地。** 1.2.0 把插件从"桥接"提升为"治理层"，修掉了上下文、空转、误操作这三类可量化的失败，但没有增加一个分析能力。
+**1.3.1 是一个"证据治理扎实、制品解析接近商业水准、动态偏 Linux/macOS 且 Windows 空白、协议与自动化仍是洼地"的分析工作台；1.3.0 把对抗初筛从零补到可用，1.3.1 让桌面端真正能加载。**
 
-下一步最划算的投入仍然是三件事：**加壳与协议的前置处理（P0-1/2，零引擎依赖）、脚本化编排（P1-7，把 300 次往返压成 1 次）、证据库与出口（P1-8 / P0-2，让分析可复用、可交付）**——三件都在插件层，不动 REA 就能拿到大部分收益；同时必须补上 1.2.0 自更新带来的供应链与产物驻留风险。
+本轮最重要的判断变化是：**最高优先级不再是"新增分析引擎"，而是"把上游已经提供的 2.9 MB 元数据与结构化结果接住，并补上三处治理旁路"**。这六件事全在插件桥接层，不动 REA、不增加上下文、每项都可量化验收；做完之后，P1 的 playbook 与证据库才有可靠的结构化基础，P2 的新引擎才有可复用的结果管线。
 
 ---
 
-## 附录 · 1.3.0 落地状态（2026-11-03）
+## 附录 · 与前两版评审的差异
 
-本节记录第八节 P0 六项的实际落地情况，避免文档与代码脱节。全部改动都在插件层，未改 REA。
-
-| P0 项 | 状态 | 实现 |
+| 项 | 1.2.0 修订版 | 1.3.1 版（本版） |
 | --- | --- | --- |
-| 1 静态对抗初筛 | ✅ | `lib/triage.js` + `rea_triage`：纯本地、不执行样本。整体/分块熵、PE/ELF/Mach-O 节区与入口/导入异常、13 类壳与混淆器签名、字符串（ASCII/UTF-16LE）、单字节 XOR 探测、可选 YARA（未安装则跳过）。输出带证据的 verdict / confidence / reasons / nextSteps / limitations。 |
-| 2 证据出口 | ✅ | `lib/export.js` + `rea_export_report`：Evidence bundle → Markdown + SARIF 2.1.0，含覆盖度、未解未知、推断边界；可从内联对象、本地 JSON 或直接调 `export_evidence_bundle` 获取。 |
-| 3 闸门去硬编码 | ✅ | `classifyTool` 改为「已知只读首词 + 明确写动词 + 全新首词 fail-closed + 描述声明」四路判定；`allowedTargets` 提供会话级路径白名单。真实工具面校验：207 个中 4 个破坏性、41 个审计（补上了原先漏掉的 `instrument_with_frida`、`execute_rizin_command`）、162 个只读，无误拦。 |
-| 4 产物治理 | ✅ | 默认 7 天保留期 + 256 MB 容量上限，激活时自动清理；`rea_purge_artifacts` 手动清理且只删本插件的会话目录；`sensitiveArtifacts` 让完整结果只回摘要、不落盘。 |
-| 5 自更新加固 | ✅ | `pinnedSha256`（与 Release 摘要不符在下载前拒绝，字节也按它校验）、`maxBackups` 默认 2、`mirrorAttempts` 逐镜像结果在侧栏可见、「安全策略」板块展示当前策略。 |
-| 6 分级提示 | ✅ | `guidanceFor`：反编译/重建类强制标注「推断，非源码」，写操作标注「已审计」，其余保持两句通用提示。 |
-
-**顺带修掉的一个真实缺陷**：`installUpdate` / `checkForUpdate` 的共享 promise 在「首个 await 之前就失败」的路径上永远不清空（内层 `finally` 先于外层赋值执行），导致后续所有安装直接返回第一次失败的结果。已改为在返回的 promise 链上清空，并补了端到端用例覆盖。
-
-**未做（P1/P2）**：playbook 沙箱、语料模式与 SQLite 结果库、原生版本差分、tshark TLS 解密与流重组、cdb/TTD Windows 调试桥、angr/Qiling 仿真脱壳、BSim 相似度、反调试对抗、fuzz harness、IDA 接入。这些要么需要新增引擎，要么需要新的子进程隔离边界，不属于本轮「降成本与风险」的范围。
-
-**仍未消除的风险**：单函数粒度与全程序图属 REA 引擎层，插件改不动；自更新的摘要与归档仍同源（`pinnedSha256` 只是把信任锚移到本地配置，不是签名）；反编译产物进入模型上下文的数据外泄问题，只能靠 `sensitiveArtifacts` + 本地模型策略缓解。
+| 对抗维度 | D（完全缺失） | C（triage 可用，但 YARA 默认未配置、无反调试/脱壳） |
+| schema 可见性 | 判定为"已解决（`rea_catalog({tool})`）" | **修正**：compact 把嵌套压平、8 000 字符截断，复杂工具仍不可见；full 单工具最大 165 KB |
+| 闸门 | 指出"硬编码名单会静默失效" | 1.3.0 已改 fail-closed；本版实测发现 5 个命令口漏判 + 7 个自有工具绕过 guard |
+| 输出 schema | 指出"只给 input，不给 output" | 实测上游 207/207 都有（2.25 MB），插件默认关闭且同步时丢弃 |
+| 注解 | 未评估 | 实测 readOnlyHint 5/202、destructiveHint 31、openWorldHint 100；给出正确用法与陷阱 |
+| 结果形态 | 只讨论体积 | 指出结构化字段与图像块被拍平/丢弃，18 个视觉工具受影响 |
+| 风险边界 | 6 + 2 条 | 新增：间接提示注入、宿主环境耦合静默失效、授权范围旁路、发布说明与实现漂移 |
+| 方案重心 | P0 六项"降成本与风险" | 1.3.0 已全部落地；新 P0 六项聚焦"接住元数据 + 补边界 + 校准初筛" |
