@@ -127,6 +127,41 @@ Java 探测会枚举 `JAVA_HOME`、各发行版的安装目录（`C:\Program Fil
 | `playbookMaxCalls` | `200` | 单个 playbook 允许发起的 REA 调用次数上限（1–2000）。 |
 | `batchTriageLimit` | `50` | `rea_batch_triage` 单次最多处理的文件数（1–500）。 |
 
+### 1.8.1 让「确认路径」先证明自己存在
+
+1.8.0 的实验列表写着 `confirm with: batch_decompile` / `load_frida_script` / `execute_rizin_command`，看上去像指令，实际是许愿：**这台机器上六个确认路径一个都跑不了**。`rea_status` 早就知道这件事，只是 plan 生成时没去问它——这是 1.8.0 的方法论缺陷，不是环境问题。
+
+本机实测（`rea_status`，2026-11-05）：
+
+```
+engines: jdk ok (17.0.8) | ghidra missing | jadx missing | apktool missing | wabt missing | rizin missing
+providers: native-macos, rea-artifact-graph, rea-dotnet-static
+blocked: android decompilation (needs JADX); native function analysis (needs Ghidra + full JDK)
+```
+
+也就是说：`open_binary` 能用（535 ms 读出 pe/x86/sha256），REA 自己的 PE/ELF/.NET 解析与 artifact graph 能用，**原生反编译一步都走不了**。拿它去调 `inspect_with_objdump` 或 `execute_rizin_command`，返回的是：
+
+```
+capability_unavailable / unsupported_provider
+"reason": "Unable to run configured command (ERR_REA_WINDOWS_NATIVE)"
+```
+
+1.8.1 的改动只有一件事：**把这条缝搬到报告里**。
+
+| 位置 | 现在长什么样 |
+| --- | --- |
+| triage 报告新增一行 | `engines: 0/6 confirmation paths ready \| unavailable: objdump (not on PATH), rizin (not on PATH), gdb (…), frida (…), ghidra (Ghidra not installed), jadx (JADX jar not configured)` |
+| 每条实验末尾 | `confirm with: load_frida_script … [frida: unavailable - frida not on PATH]` |
+| 没有探测时的诚实默认 | `report.providers === null`，报告写「not probed」，不是「全部可用」 |
+
+实现：`lib/engines.js` 加 `providerReadiness()`（`where`/`which` 只定位、不启动引擎，Ghidra 走既有检测），`lib/plan.js` 把每条实验的 `confirm` 首词映射到 provider 并附 `ready`，`rea_triage` / `rea_batch_triage` 每次调用重新探测——中途装了 Ghidra 就会立刻显示 ready。
+
+**关于「能不能完整逆向并反编译」，直说**：
+
+- 装了 Ghidra 的原生反编译产出是 **C 伪代码**，不是源码。类型、结构体、宏、内联、优化后的变量复用都回不来；被混淆/虚拟化的代码连伪代码都不成立。
+- 本机现在连 Ghidra 都没有，所以更弱：深度止步于本地静态层（字符串/结构/行为/假设），**一条指令都没被反汇编**。
+- 安装通道可达（Ghidra 资产返回 302 而不是 502），但需要 JDK 21（本机是 17.0.8）与约 500 MB 下载。这一步会显著改变机器状态，需你确认后再做。
+
 ### 1.8.0 从勘查员到独立分析师：D6–D8
 
 1.7.0 把「逆向能力」变成了数字，但五个维度全是字符串召回——那测的是勘查员。独立分析师还要回答三件事：**这东西由什么构成、它是干什么的、下一步做什么实验能定论**。1.8.0 把这三件事做成维度，并让 Defender 造出对应的靶标。

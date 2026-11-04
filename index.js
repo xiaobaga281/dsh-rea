@@ -44,7 +44,7 @@ import { childEnvironment, resolveConfig } from './lib/config.js';
 import { createLimiter } from './lib/concurrency.js';
 import {
   ENGINE_ENV_OVERRIDES, applyGhidraEnvironment, detectGhidra, engineConfigSignature,
-  environmentStatus, installExternalTool, installGhidra, saveEnginePaths,
+  environmentStatus, installExternalTool, installGhidra, providerReadiness, saveEnginePaths,
 } from './lib/engines.js';
 import { ReaMcpClient } from './lib/mcp-client.js';
 import { DSH_HOME, PLUGIN_ROOT, WORKSPACE_DIR } from './lib/paths.js';
@@ -269,6 +269,16 @@ export async function apply(ctx, rawConfig = {}) {
     maxBytes: config.triageMaxBytes,
     yaraRulesDir: config.yaraRulesDir,
     availableTools: null,
+    // Probed per call rather than once at activation: a session that installs
+    // Ghidra half-way must stop being told the confirm path is unavailable.
+    // The probe only locates binaries, it never starts an engine.
+    providers: async () => {
+      try {
+        return await providerReadiness();
+      } catch {
+        return null;
+      }
+    },
   };
   ctx.effect(() => register(buildTriageTool(triageOptions)), 'dsh-rea: triage tool');
 

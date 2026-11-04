@@ -4,6 +4,7 @@ import test from 'node:test';
 import { buildGeneration } from '../scripts/duel/defender.mjs';
 import { readPeLayout, parseTlsCallbacks, findCodePointerTables, classifyCodePointerTables, structuralAnomalies, structureProfile } from '../lib/structure.js';
 import { assessBehavior, planNextSteps } from '../lib/plan.js';
+import { triageBuffer } from '../lib/triage.js';
 import { HASH_ALGORITHMS, buildHashIndex, recoverHashedApis } from '../lib/api-hash.js';
 
 const D0 = buildGeneration('D0').buffer;
@@ -123,4 +124,56 @@ test('uninitialised data does not count as a structural anomaly, executable grow
   }, { importsPresent: true });
   assert.equal(stub.length, 1);
   assert.match(stub[0], /self-unpacking/);
+});
+
+test('an experiment says so when the tool it names cannot run', () => {
+  // 1.8.0 shipped confirm strings like "confirm with: batch_decompile" on hosts
+  // with no Ghidra, which reads as an instruction but is not one. The provider
+  // tag is what makes the seam visible.
+  const offline = {
+    live: 0,
+    total: 3,
+    providers: {
+      frida: { ready: false, reason: 'frida not on PATH' },
+      ghidra: { ready: false, reason: 'Ghidra not installed' },
+      rizin: { ready: true, reason: null },
+    },
+  };
+  const plan = planNextSteps({
+    structure: { sections: [], tls: { present: false, callbacks: [] }, dispatchTables: [], importsPresent: false },
+    unresolved: [{ label: 'sealed-config', offset: 0x600, length: 1024, rva: 0x1000 }],
+    strings: ['cfg=derive(GetVolumeInformationA)'],
+    behavior: { findings: [] },
+    hashed: [],
+    entry: 0x1000,
+    providers: offline,
+  });
+  const step = plan.find((item) => item.provider);
+  assert.ok(step, 'no provider tag was attached');
+  assert.equal(step.provider.ready, false);
+  assert.match(step.confirm, /load_frida_script/);
+
+  const withoutProbe = planNextSteps({
+    structure: { sections: [], tls: { present: false, callbacks: [] }, dispatchTables: [], importsPresent: false },
+    unresolved: [{ label: 'sealed-config', offset: 0x600, length: 1024, rva: 0x1000 }],
+    strings: ['cfg=derive(GetVolumeInformationA)'],
+    behavior: { findings: [] }, hashed: [], entry: 0x1000,
+  });
+  assert.equal(withoutProbe.find((item) => item.provider), undefined, 'a probe that was never supplied must not be invented');
+});
+
+test('triage carries the engine snapshot into its report', () => {
+  const providers = { live: 1, total: 2, note: null, providers: { frida: { ready: true, reason: null }, ghidra: { ready: false, reason: 'Ghidra not installed' } } };
+  const report = triageBuffer(buildGeneration('D6').buffer, { name: 'D6.exe', providers });
+  assert.equal(report.providers.live, 1);
+  assert.equal(report.providers.total, 2);
+  assert.equal(report.providers.ready.ghidra.ready, false);
+  const tagged = report.plan.filter((step) => step.provider);
+  assert.ok(tagged.length > 0);
+  assert.ok(tagged.every((step) => ['frida', 'ghidra', 'rizin'].includes(step.provider.key)));
+});
+
+test('without a probe the report admits it did not check', () => {
+  const report = triageBuffer(buildGeneration('D0').buffer, { name: 'D0.exe' });
+  assert.equal(report.providers, null);
 });
