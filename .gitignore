@@ -23,6 +23,3 @@ Thumbs.db
 
 # REA Ghidra per-run scratch, created beside the target when TMP is unset
 rea-ghidra-*/
-
-# REA Ghidra per-run scratch, created beside the target when TMP is unset
-rea-ghidra-*/
