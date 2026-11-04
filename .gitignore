@@ -20,3 +20,6 @@ Thumbs.db
 
 # Local reverse-engineering engines (Ghidra, JDK) - never committed
 .tools/
+
+# REA Ghidra per-run scratch, created beside the target when TMP is unset
+rea-ghidra-*/
