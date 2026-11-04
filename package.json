@@ -1,8 +1,8 @@
 {
   "name": "dsh-rea",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "displayName": "逆向分析",
-  "description": "Reverse-engineering tools for DeepSeek Harness: a deferred 207-tool catalog with full-schema progressive disclosure, hardened path/trust boundaries, structured result index, trusted playbooks, local static triage, evidence exports, environment sidebar, and redundant-mirror self-update.",
+  "description": "Reverse-engineering tools for DeepSeek Harness: a deferred full-schema catalog, hardened path/trust boundaries, structured result index, trusted playbooks, local static triage with a measured decode ladder (repeating-key XOR, RC4, stack strings, API hashes), per-build watermark detection, evidence exports, environment sidebar, and redundant-mirror self-update.",
   "type": "module",
   "icon": "./icon.svg",
   "exports": {
@@ -24,7 +24,8 @@
     "README.md",
     "LICENSE",
     "vendor/rea-runtime.tgz",
-    "vendor/rea-runtime.sha256"
+    "vendor/rea-runtime.sha256",
+    "docs/*.md"
   ],
   "scripts": {
     "test": "node --test",
@@ -34,7 +35,8 @@
     "concurrency": "node scripts/concurrency-probe.mjs",
     "make-sample": "node scripts/make-sample.mjs",
     "demo": "node scripts/capability-demo.mjs",
-    "triage-baseline": "node scripts/triage-baseline.mjs"
+    "triage-baseline": "node scripts/triage-baseline.mjs",
+    "ladder": "node scripts/harden-ladder.mjs"
   },
   "dsh": {
     "bundle": {
