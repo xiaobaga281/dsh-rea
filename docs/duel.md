@@ -124,6 +124,19 @@ email G@I...mAC       email GGGFG@GG.HPd     domain gXZ.cN
 顺带一个纯工程优化：探针内层里每个偏移查一次 `Set`，50 多个探针 × 512 K 偏移 = 2800 万次哈希，比它要保护的正经工作还贵。换成 256 位图后 7zr 从 900 ms 降到 513 ms。
 
 
+## 1.8.2：第一个由引擎判分的维度
+
+前面的维度全部由本地静态层打分，因此再严格也只在「假设」内部自洽。装上 Ghidra 12.1.4 之后，报告多输出一行机器可读的探针（`probe: inspect_address_context @ 0x409800`），攻击方读它、真的调用 REA、把返回的符号名当分数。D6–D8 都解析出 `tls_callback_0`；D8 的盐仍然拿不到——`verify` 证明的是「这条实验跑得通」，不是「样本被解开了」，两者不能混算。
+
+同一次实测打回了四处缺陷，其中三处是「文档说得对、工具做不到」：
+
+- `batch_decompile` 指向 TLS 回调必然失败：回调由数据指针引用，Ghidra 不建函数，返回 `invalid_request: No procedure exists at 0x409800`。计划里改成 `inspect_address_context` 才跑得通。
+- 报告只给 RVA 不给镜像基址，读者无法把 RVA 变成引擎要的 VA。
+- 侧栏把 JDK 17 报成 ready，而 Ghidra 12 只认 21+，实际问题被藏在一个「ok」后面。
+- 侧栏保存的 `JAVA_HOME` 被子进程继承值覆盖，配置形同虚设。
+
+安装位置：`<repo>/.tools/`（`ghidra_12.1.4_PUBLIC` + `jdk-21.0.13+9`），C 盘只留 `rea-engines/config.json` 里的两个路径字符串。若宿主限制子进程只能写工作区，`TMP`/`TEMP`/`APPDATA` 必须一并指过去，否则 REA 的私有运行目录会让 JVM 在写 `java_home.save` 时被拒，Ghidra 会误报「找不到 JDK」。
+
 ## 1.8.0：从「字符串在不在」到「分析师该回答什么」
 
 1.7.0 的五个维度全是字符串召回。它能测出「勘查员」的水平，测不出「独立分析师」——后者还要回答结构、行为，以及「下一步做什么实验」。

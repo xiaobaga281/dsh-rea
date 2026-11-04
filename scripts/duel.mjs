@@ -63,8 +63,8 @@ const ceiling = {
 // the next experiment now carry 43% between them, which is the difference
 // between a technician and an analyst.
 const WEIGHTS = {
-  endpoints: 0.15, iocText: 0.15, tracking: 0.10, anti: 0.12, watermarks: 0.05,
-  api: 0.15, behavior: 0.15, plan: 0.13,
+  endpoints: 0.13, iocText: 0.13, tracking: 0.10, anti: 0.10, watermarks: 0.04,
+  api: 0.14, behavior: 0.14, plan: 0.10, verify: 0.12,
 };
 
 const ratio = (hit, total) => (total === 0 ? 1 : Number((hit / total).toFixed(3)));
@@ -89,6 +89,11 @@ const scoreRow = (row) => {
     api: ceiling.api.length === 0 ? null : ratio(got.api.length, ceiling.api.length),
     behavior: ceiling.behavior.length === 0 ? null : ratio(got.behavior.length, ceiling.behavior.length),
     plan: row.unrecoverable ? (row.planOk ? 1 : 0) : null,
+    // `verify` is the only dimension an engine decides. It asks whether the
+    // machine-readable probe the report emitted actually ran and resolved a
+    // name; a plan that points at an address no analyzer recognises scores 0
+    // here even when the prose around it sounds right.
+    verify: row.probe ? (row.probe.ok && Boolean(row.probe.name) ? 1 : 0) : null,
   };
   // `plan` only means something when something is actually sealed; for the
   // open generations its weight is redistributed instead of scored as a free 1.
@@ -172,7 +177,8 @@ for (const row of scored) {
     + `| noise ${row.noise}`);
   console.log(`    api ${row.got.api.length}/${ceiling.api.length}  `
     + `behaviour ${row.got.behavior.length}/${ceiling.behavior.length}  `
-    + `plan ${row.unrecoverable ? (row.planOk ? 'yes' : 'NO') : 'n/a'}`);
+    + `plan ${row.unrecoverable ? (row.planOk ? 'yes' : 'NO') : 'n/a'}`
+    + `  verify ${row.probe ? (row.probe.ok && row.probe.name ? row.probe.name : 'FAILED') : 'n/a'}`);
   const misses = Object.entries(row.missing).filter(([, list]) => list.length > 0)
     .map(([key, list]) => `${key}: ${list.slice(0, 3).join(' | ')}`);
   if (misses.length > 0) console.log(`    blind spots: ${misses.join('  ;;  ')}`);
@@ -180,7 +186,7 @@ for (const row of scored) {
   console.log(`    score ${pct(row.overall)}`);
   console.log('');
 }
-console.log(`${pad('gen', 5)}${pad('endpoint', 10)}${pad('indicator', 11)}${pad('tracking', 10)}${pad('anti', 7)}${pad('wm', 6)}${pad('api', 7)}${pad('behav', 8)}${pad('plan', 6)}${pad('noise', 7)}score`);
+console.log(`${pad('gen', 5)}${pad('endpoint', 10)}${pad('indicator', 11)}${pad('tracking', 10)}${pad('anti', 7)}${pad('wm', 6)}${pad('api', 7)}${pad('behav', 8)}${pad('plan', 6)}${pad('verify', 8)}${pad('noise', 7)}score`);
 for (const row of scored) {
   console.log(`${pad(row.id, 5)}${pad(`${row.got.endpoints.length}/${ceiling.endpoints.length}`, 10)}`
     + `${pad(`${row.got.iocText.length}/${ceiling.iocText.length}`, 11)}`
@@ -190,6 +196,7 @@ for (const row of scored) {
     + `${pad(`${row.got.api.length}/${ceiling.api.length}`, 7)}`
     + `${pad(`${row.got.behavior.length}/${ceiling.behavior.length}`, 8)}`
     + `${pad(row.unrecoverable ? (row.planOk ? 'yes' : 'NO') : '-', 6)}`
+    + `${pad(row.probe ? (row.probe.ok && row.probe.name ? 'yes' : 'NO') : '-', 8)}`
     + `${pad(row.noise, 7)}${pct(row.overall)}`);
 }
 console.log(`mean ${pct(mean)}  weakest ${report.weakest}  honesty failures: ${report.honestyFailures.join(', ') || 'none'}`);

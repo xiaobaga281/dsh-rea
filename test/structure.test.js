@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { buildGeneration } from '../scripts/duel/defender.mjs';
 import { readPeLayout, parseTlsCallbacks, findCodePointerTables, classifyCodePointerTables, structuralAnomalies, structureProfile } from '../lib/structure.js';
+import { javaRequirement } from '../lib/engines.js';
 import { assessBehavior, planNextSteps } from '../lib/plan.js';
 import { triageBuffer } from '../lib/triage.js';
 import { HASH_ALGORITHMS, buildHashIndex, recoverHashedApis } from '../lib/api-hash.js';
@@ -176,4 +177,30 @@ test('triage carries the engine snapshot into its report', () => {
 test('without a probe the report admits it did not check', () => {
   const report = triageBuffer(buildGeneration('D0').buffer, { name: 'D0.exe' });
   assert.equal(report.providers, null);
+});
+
+test('a JDK that exists but is too old is not a ready engine', () => {
+  // 1.8.1 shipped "jdk ok (17.0.8)" beside "ghidra missing" and every decompile
+  // died in Ghidra's launcher with "JDK 21+ could not be found". The status was
+  // literally true and practically a lie.
+  const old = javaRequirement({ available: true, major: 17, version: '17.0.8' });
+  assert.equal(old.sufficient, false);
+  assert.match(old.note, /older than JDK 21/);
+
+  const ok = javaRequirement({ available: true, major: 21, version: '21.0.13' });
+  assert.equal(ok.sufficient, true);
+  assert.equal(ok.note, null);
+
+  // Unknown version is not evidence of sufficiency.
+  assert.equal(javaRequirement({ available: true, major: null }).sufficient, false);
+  assert.equal(javaRequirement({ available: false }).note, null);
+});
+
+test('the report states the image base so a probe address can be computed', () => {
+  const report = triageBuffer(buildGeneration('D6').buffer, { name: 'D6.exe' });
+  assert.equal(report.structure.imageBase, 0x400000);
+  const step = report.plan.find((item) => item.probe);
+  assert.ok(step, 'no machine-readable probe was emitted');
+  assert.equal(step.probe.tool, 'inspect_address_context');
+  assert.ok(Number.isInteger(step.probe.rva));
 });

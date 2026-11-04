@@ -17,3 +17,6 @@ Thumbs.db
 
 # Agent workspace data (memory, local state)
 .workbuddy/
+
+# Local reverse-engineering engines (Ghidra, JDK) - never committed
+.tools/

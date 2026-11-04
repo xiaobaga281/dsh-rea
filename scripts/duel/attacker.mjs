@@ -112,6 +112,26 @@ export async function attack(tools, path) {
   // analyst would read, never read back from the module that produced them.
   const apiHits = APIS.filter((api) => new RegExp(`\\b${api}\\b`, 'i').test(triageText));
   const behaviorHits = BEHAVIOURS.filter((label) => triageText.toLowerCase().includes(label.toLowerCase()));
+  // Run the first machine-readable probe the report offers. A confirm step
+  // that cannot be executed is a wish; this is where it gets tested.
+  const probeMatch = triageText.match(/probe:\s*([a-z_]+)\s*@\s*(0x[0-9a-f]+)/i);
+  let probe = null;
+  if (probeMatch) {
+    const [, toolName, address] = probeMatch;
+    const opened = await call(tools, 'mcp__rea__open_binary', { path });
+    const result = await call(tools, `mcp__rea__${toolName}`, { address });
+    const textProbe = result.text.slice(0, 4000);
+    const named = /"name"\s*:\s*\{\s*"state"\s*:\s*"available"\s*,\s*"value"\s*:\s*"([^"]+)"/.exec(textProbe);
+    probe = {
+      tool: toolName,
+      address,
+      opened: opened.ok,
+      ok: result.ok && /"state"\s*:\s*"available"/.test(textProbe),
+      name: named?.[1] ?? null,
+      excerpt: textProbe.slice(0, 300),
+    };
+  }
+
   const planAt = triageText.toLowerCase().indexOf('experiments (ranked');
   const planBlock = planAt >= 0 ? triageText.slice(planAt) : '';
   const planOk = planBlock.length > 0
@@ -132,6 +152,7 @@ export async function attack(tools, path) {
     apiHits,
     behaviorHits,
     planOk,
+    probe,
     planExcerpt: planBlock.split('\n').slice(0, 6).join('\n'),
     noise,
     indicatorCount: values.size,

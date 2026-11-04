@@ -127,6 +127,44 @@ Java 探测会枚举 `JAVA_HOME`、各发行版的安装目录（`C:\Program Fil
 | `playbookMaxCalls` | `200` | 单个 playbook 允许发起的 REA 调用次数上限（1–2000）。 |
 | `batchTriageLimit` | `50` | `rea_batch_triage` 单次最多处理的文件数（1–500）。 |
 
+### 1.8.2 装了引擎之后：从「会说」到「跑得通」
+
+1.8.1 把「确认路径不可用」写进了报告，但没有回答另一半问题：**装上引擎以后，那些确认步骤真的跑得通吗**。这一版把 Ghidra 12.1.4 + JDK 21 装进工作区 `.tools/`（不进 C 盘、不进 `node_modules`），让攻击方第一次真的执行自己写的实验。
+
+#### 新增 `verify` 维度（权重 0.12，由引擎判定）
+
+报告现在为每条带地址的实验输出一行机器可读的探针：
+
+```
+confirm with: inspect_address_context at RVA 0x9800 - Ghidra resolves the callback's name from the TLS directory ...
+probe: inspect_address_context @ 0x409800
+```
+
+攻击方读这一行、真的调用 REA，比对返回里的符号名。**评分不看措辞，看解析结果**：
+
+| 代际 | plan | verify | 结果 |
+| --- | --- | --- | --- |
+| D0–D5 | -/yes | - | 无结构探针，权重重分配 |
+| D6 / D7 | yes | yes | `tls_callback_0`，8–20 s/次 |
+| D8 | yes | yes | `tls_callback_0`，盐仍不可解 |
+
+九维权重相应调整为 `0.13/0.13/0.10/0.10/0.04/0.14/0.14/0.10/0.12`，八代均值 **94.5%**（D0–D4 100%、D5 92.5%、D6/D7 93.4%、D8 76.3%），honesty failures 0。
+
+#### 装引擎过程中暴露的四个真实缺陷
+
+| 缺陷 | 表现 | 修法 |
+| --- | --- | --- |
+| **JDK 版本误报**（你在面板上看到的那个） | `engines: jdk ok (17.0.8) \| ghidra missing`，可 JDK 17 对 Ghidra 12 毫无用处：启动器直接退出 `JDK 21+ (64-bit) could not be found` | 新增 `javaRequirement()`：JDK 就绪 = 存在 + 是完整 JDK + **主版本 ≥ Ghidra 要求**。面板显示「JDK 17.0.8 版本过低，Ghidra 需要 21+」 |
+| **保存的引擎路径被环境变量盖掉** | 侧栏里配了 JDK 21，子进程实际仍拿到 `JAVA_HOME=...jdk-17`（`PASSTHROUGH_ENV_NAMES` 在 `ENGINE_ENV_OVERRIDES` 之后写入） | 调换优先级：保存的路径最后写，显式配置永远赢过继承值 |
+| **TLS 回调用 `batch_decompile` 必然失败** | 回调由数据指针引用，Ghidra 不建函数，调用返回 `invalid_request: No procedure exists at 0x409800` | 改为 `inspect_address_context`（Ghidra 能解析出 `tls_callback_0`），并在文案里说明「要伪代码得先建函数」 |
+| **报告不给镜像基址** | 只给 RVA，任何引擎调用都要 VA，读者得自己猜基址 | `structure:` 行输出 `image base 0x400000 \| entry RVA 0x9100`，探针行直接给 VA |
+
+#### 本地引擎的安装位置与两个环境约束
+
+- 引擎装在 `<repo>/.tools/`（已加入 `.gitignore`），`GHIDRA_INSTALL_DIR` 与 `JAVA_HOME` 通过 `rea-engines` 配置指向它；**C 盘只有一份 100 字节的路径配置**。
+- Ghidra 12.1.4 要求 **JDK 21+**（11.2 起就提了），JDK 17 只能配 Ghidra 11.1 及更早。
+- 若宿主把子进程限制在工作区内（本机就是），必须把 `TMP`/`TEMP`/`APPDATA` 也指到工作区，否则 REA 的私有运行目录会让 JVM 写 `java_home.save` 时被 ACL 拒绝，而 Ghidra 会把它误报成「找不到 JDK」。
+
 ### 1.8.1 让「确认路径」先证明自己存在
 
 1.8.0 的实验列表写着 `confirm with: batch_decompile` / `load_frida_script` / `execute_rizin_command`，看上去像指令，实际是许愿：**这台机器上六个确认路径一个都跑不了**。`rea_status` 早就知道这件事，只是 plan 生成时没去问它——这是 1.8.0 的方法论缺陷，不是环境问题。
