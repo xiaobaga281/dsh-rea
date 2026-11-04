@@ -41,6 +41,7 @@ import { join } from 'node:path';
 import { classifyTool, createArtifactStore, pathOutsideScope, sessionArtifactRoot } from './lib/artifacts.js';
 import { buildExportReportTool, buildPurgeArtifactsTool, buildTriageTool } from './lib/analysis-tools.js';
 import { childEnvironment, resolveConfig } from './lib/config.js';
+import { createLimiter } from './lib/concurrency.js';
 import {
   ENGINE_ENV_OVERRIDES, applyGhidraEnvironment, detectGhidra, engineConfigSignature,
   environmentStatus, installExternalTool, installGhidra, saveEnginePaths,
@@ -53,7 +54,7 @@ import { mountEnvironmentRoutes } from './lib/routes.js';
 import { createResultIndex, snapshotMeta } from './lib/result-index.js';
 import { installSkill, resolveReaPackage } from './lib/runtime.js';
 import { createSchemaCache, probeFullCatalog } from './lib/schema-cache.js';
-import { buildCatalogTool, buildDoctorTool, buildReadArtifactTool, buildStatusTool, buildTool, publicToolName, textOf } from './lib/tools.js';
+import { buildCatalogTool, buildDescribeArtifactTool, buildDoctorTool, buildReadArtifactTool, buildStatusTool, buildTool, publicToolName, textOf } from './lib/tools.js';
 import { checkForUpdate, configureMirrors, installUpdate, updateStatus } from './lib/update.js';
 
 /** Services this plugin needs; `tools` is the registry REA's catalog lands in. */
@@ -140,7 +141,11 @@ export async function apply(ctx, rawConfig = {}) {
   // in the model's context, and are served one JSON path at a time.
   const schemaCache = createSchemaCache();
   // Result anchors survive the session directory's retention window.
-  const resultIndex = createResultIndex({ base: artifactBase });
+  const resultIndex = createResultIndex({
+    base: artifactBase,
+    maxBytes: config.resultIndexMaxBytes,
+    retentionDays: config.artifactRetentionDays,
+  });
 
   const statusPayload = async () => ({
     ...(await environmentStatus()),
@@ -193,14 +198,13 @@ export async function apply(ctx, rawConfig = {}) {
    */
   const OWN_WRITE_TOOLS = new Set(['rea_purge_artifacts', 'rea_export_report', 'rea_run_playbook']);
   const ownGuard = (name, args) => {
-    for (const [key, value] of Object.entries(args ?? {})) {
-      if (typeof value !== 'string' || !/^(path|file|directory|dir|target|output|input)$/i.test(key)) continue;
-      if (value.length === 0 || !/^[A-Za-z]:[\\/]|^\//.test(value)) continue;
-      if (artifacts.inside(value)) continue;
-      const outside = pathOutsideScope({ [key]: value }, config.allowedTargets);
-      if (outside) {
-        return `${name}: ${outside.key} "${value}" is outside this session's allowedTargets.`;
-      }
+    // Same value-shape check as the bridged tools: no parameter-name whitelist,
+    // so an own tool cannot become a path-scope bypass through a nested input.
+    const outside = pathOutsideScope(args, config.allowedTargets, {
+      exempt: (path) => artifacts.inside(path),
+    });
+    if (outside) {
+      return `${name}: ${outside.key} "${outside.path}" is outside this session's allowedTargets.`;
     }
     if (OWN_WRITE_TOOLS.has(name)) {
       void artifacts.audit({ tool: name, args: Object.keys(args ?? {}), policy: 'own-tool-write' });
@@ -230,6 +234,7 @@ export async function apply(ctx, rawConfig = {}) {
   ctx.effect(() => register(buildCatalogTool(catalog, schemaCache)), 'dsh-rea: catalog tool');
 
   ctx.effect(() => register(buildReadArtifactTool(artifacts)), 'dsh-rea: artifact reader');
+  ctx.effect(() => register(buildDescribeArtifactTool(artifacts)), 'dsh-rea: binary evidence describe');
 
   // Declared before the status tool so it can close over the live client: the
   // tool is advertised from the first turn, while the connection may still be
@@ -326,13 +331,14 @@ export async function apply(ctx, rawConfig = {}) {
   }
 
   let syncing = false;
+  const readLimiter = createLimiter(config.maxConcurrentReadTools);
   let restarting;
   let attempts = 0;
   let reconnectTimer;
 
   async function sync() {
     const entries = await client.listTools();
-    schemaCache.prime(entries);
+    schemaCache.prime(entries, client.serverInfo?.version ?? null);
     // Triage's next steps name only tools the server actually advertises.
     triageOptions.availableTools = new Set(entries.map((entry) => entry?.name).filter((name) => typeof name === 'string'));
     const definitions = [];
@@ -342,6 +348,7 @@ export async function apply(ctx, rawConfig = {}) {
       const definition = buildTool(client, entry, config.deferCatalog, {
         spill: (name, text) => artifacts.maybeSpill(name, text),
         guard: (name, args, schemaEntry) => guardTool(name, args, schemaEntry),
+        limiter: readLimiter,
         metadata: (name, result, text) => {
           const meta = snapshotMeta(name, result, text);
           void resultIndex.record(meta);
@@ -445,13 +452,13 @@ export async function apply(ctx, rawConfig = {}) {
   if (config.catalogProbe && REA_ENTRY !== undefined) {
     void (async () => {
       try {
-        const full = await probeFullCatalog({
+        const { entries: full, serverVersion } = await probeFullCatalog({
           ReaMcpClient, childEnvironment, config,
           entry: REA_ENTRY, cwd: WORKSPACE_DIR, version: PLUGIN_VERSION,
           log: (message) => log.warn(`dsh-rea: catalog probe: ${message}`),
         });
-        const count = schemaCache.primeFull(full);
-        log.info(`dsh-rea: full catalog cached (${count} tools, ${Math.round(schemaCache.memoryBytes / 1024)} KB in memory)`);
+        const count = schemaCache.primeFull(full, serverVersion);
+        log.info(`dsh-rea: full catalog cached (${count} tools, ${Math.round(schemaCache.memoryBytes / 1024)} KB in memory, live/probe versions ${schemaCache.versionConsistent === false ? 'MISMATCH' : 'match'})`);
       } catch (error) {
         schemaCache.markProbeFailed(error?.message ?? error);
         log.warn(`dsh-rea: full catalog probe failed; rea_catalog stays compact: ${error?.message ?? error}`);

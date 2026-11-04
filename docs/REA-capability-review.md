@@ -233,3 +233,25 @@ node <schema-probe>         # 导出 full / compact 两份 tools/list 快照
 ```
 
 分类分布复核脚本会打印 `readOnlyConcurrent: 157 / mutating: 50 / destructiveBlocked: 4 / externalHint: 108`，以及 `checkForUpdate({trustedManifestKey})` 的 `source` —— 这两个数字是本版两个 P0 的直接证据。
+
+---
+
+## 附录 · 1.5.0 落地状态（2026-11-04 晚）
+
+按本版 P0/P1 改进，**测试 152/152**、**host-matrix 3/3（222 工具 + 6 路由）**、**并发压测 30/30**。
+
+| 方案项 | 状态 | 实现 |
+|---|---|---|
+| P0-1 路径授权值形态判定 | ✅ | `scopeCandidates()` 遍历所有字符串值（数组 + 一层嵌套）匹配绝对路径形态；`pathOutsideScope()` 与 `ownGuard` 共用；URL scheme 白名单；11 个漏网路径键回归用例；host-matrix 新增 `output_directory` 越界断言 |
+| P0-2 签名门禁 fail-closed | ✅ | 配 `trustedManifestKey` 时只跑验签 manifest 源，Release API 不参与；失败直接抛错不回退；`installUpdate` 第二道闸拒绝未签名来源；`resolveTrustPolicy()` 四态（`none`/`pin`/`signature`/`pin+signature`），侧栏显示实际级别。实测配 key → `phase=error`、`source=null`、明确拒绝；不配 → `1.4.0 / api.github.com / none` |
+| P0-3 结果索引治理 | ✅ | Promise 队列串行写、`prevHash`/`hash` 链、每 100 写自动按保留期/容量滚动、`queryDetailed()` 返回 `truncated`/`scanned`/`totalLines`、`rea_query_results` 显示截断提示 |
+| P0-4 说明一致性门禁 | ✅ | host-matrix 输出 `dist/host-matrix.json`（工具数/路由数/分类分布），并断言 README 里的 `157 个只读工具` 与 `222 工具`；实测第一次运行就抓到 162/221 漂移，修正后 3/3 PASS |
+| P0-5 元数据单源化 | ✅ | `ReaMcpClient` 保存 `initialize` 的 `serverInfo.version`；`prime/primeFull` 绑定版本戳，`versionConsistent=false` 时 `rea_catalog` 输出警告；`includeOutput` 回退 `full → compact → source` |
+| P1 并发限流与压测 | ✅ | `lib/concurrency.js` semaphore（默认 6，可配 1–32）挂到所有只读桥接工具；`npm run concurrency` 真实子进程 30 次并发对比：无闸 30/30、39 ms；限流 30/30、26 ms——这组轻量只读工具能承受突发，限流不损失吞吐 |
+| P1 真实语料基线 | ⚠️ 部分 | `triage-baseline --corpus` 已支持带标签语料并输出混淆矩阵/识别率/误报率；**本机没有真实壳样本**，所以仍只有合成矩阵，不宣称识别率 |
+| P1 报告隔离 | ✅ | SARIF `results[].message.text` 过 `markUntrusted('evidence')`，包裹 + 转义 + 截断 |
+| P1 二进制文本化 | ✅ | `writeBinary()` 写 `.meta.json`（mime/字节/摘要/来源工具/PNG·GIF·WebP 尺寸）；新增 `rea_describe_artifact` 返回文本描述与"是否与采集时摘要一致"；二进制本身仍不进上下文（opt-in 多模态转发未做） |
+| P1 统一信任根 | ✅ | `trustPolicy` 四态 + 侧栏实际级别 + 安装前第二道闸，签名/pin/无保护不再混淆 |
+| P2 上游能力 | ❌ 未做 | tshark keylog / cdb·TTD·ETW / 进程 dump / BSim / Qiling·angr / IDA 均需新引擎或商业授权，插件层无法实现，不假装落地 |
+
+**仍存边界**：路径授权是字符串级（`resolve()` 不解析 junction/8.3 短名）；playbook 仍是可信代码隔离而非沙箱；`results.jsonl` 是带哈希链的元数据而非防篡改证据库；并发压测只覆盖 6 个轻量只读工具，大结果/长事务工具未验证；签名发布需要运维持有 minisign 私钥并发布 `.minisig`，否则配了 `trustedManifestKey` 会**正确地**让检查更新失败。
