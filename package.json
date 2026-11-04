@@ -32,6 +32,8 @@
     "manifest": "node scripts/update-manifest.mjs",
     "host-matrix": "node scripts/host-matrix.mjs",
     "concurrency": "node scripts/concurrency-probe.mjs",
+    "make-sample": "node scripts/make-sample.mjs",
+    "demo": "node scripts/capability-demo.mjs",
     "triage-baseline": "node scripts/triage-baseline.mjs"
   },
   "dsh": {
