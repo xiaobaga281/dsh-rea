@@ -49,6 +49,7 @@ import {
 import { ReaMcpClient } from './lib/mcp-client.js';
 import { DSH_HOME, PLUGIN_ROOT, WORKSPACE_DIR } from './lib/paths.js';
 import { buildPlaybookTool, buildProtocolTool, buildWindowsToolsTool, buildWorkflowTools } from './lib/workflow-tools.js';
+import { buildIntelTools } from './lib/intel-tools.js';
 import { createToolRegistry } from './lib/registry.js';
 import { mountEnvironmentRoutes } from './lib/routes.js';
 import { createResultIndex, snapshotMeta } from './lib/result-index.js';
@@ -147,6 +148,7 @@ export async function apply(ctx, rawConfig = {}) {
     retentionDays: config.artifactRetentionDays,
   });
 
+  let externalToolCount = 0;
   const statusPayload = async () => ({
     ...(await environmentStatus()),
     version: PLUGIN_VERSION,
@@ -160,6 +162,8 @@ export async function apply(ctx, rawConfig = {}) {
       catalogProbe: config.catalogProbe,
       imageCapture: config.imageCapture,
       playbookDir: config.playbookDir,
+      networkEgressPolicy: config.networkEgressPolicy,
+      externalToolCount,
     },
   });
 
@@ -177,6 +181,12 @@ export async function apply(ctx, rawConfig = {}) {
     const { mutating, destructive, inferred, external, verb } = classifyTool(name, entry);
     if (destructive && !config.allowDeviceMutations) {
       return `${name} removes or overwrites something on the attached device and is disabled. Set "allowDeviceMutations: true" on the dsh-rea row if that is intended.`;
+    }
+    // Optional analyst-side exposure control: upstream marks 108 tools as
+    // openWorld/destructive. "deny" is opt-in because it also blocks harmless
+    // tools; "warn" (default) only records the call.
+    if (external && config.networkEgressPolicy === 'deny') {
+      return `${name} is marked openWorldHint/destructiveHint by upstream and networkEgressPolicy is "deny". Set it to "warn" if this call is intended.`;
     }
     if (mutating) {
       void artifacts.audit({ tool: name, args: Object.keys(args ?? {}), policy: inferred ? `inferred:${verb}` : 'known' });
@@ -201,7 +211,11 @@ export async function apply(ctx, rawConfig = {}) {
     // Same value-shape check as the bridged tools: no parameter-name whitelist,
     // so an own tool cannot become a path-scope bypass through a nested input.
     const outside = pathOutsideScope(args, config.allowedTargets, {
-      exempt: (path) => artifacts.inside(path),
+      // The sanitizer's whole purpose is to receive text containing local
+      // absolute paths; treating that text as a path argument would make the
+      // tool unable to do its job in a scoped session.
+      exempt: (path, key) => artifacts.inside(path)
+        || (name === 'rea_sanitize_report' && /^(text|report)$/.test(key ?? '')),
     });
     if (outside) {
       return `${name}: ${outside.key} "${outside.path}" is outside this session's allowedTargets.`;
@@ -268,6 +282,17 @@ export async function apply(ctx, rawConfig = {}) {
     triageOptions,
     maxBatch: config.batchTriageLimit,
     store: artifacts,
+  })) {
+    ctx.effect(() => register(definition), label);
+  }
+
+  // Static intelligence: indicators, tracking surface, anti-analysis matrix
+  // and analyst-side report sanitisation. All local, no execution/network.
+  for (const [definition, label] of buildIntelTools({
+    store: artifacts,
+    maxBytes: config.triageMaxBytes,
+    triageOptions,
+    env: process.env,
   })) {
     ctx.effect(() => register(definition), label);
   }
@@ -339,6 +364,7 @@ export async function apply(ctx, rawConfig = {}) {
   async function sync() {
     const entries = await client.listTools();
     schemaCache.prime(entries, client.serverInfo?.version ?? null);
+    externalToolCount = entries.filter((entry) => classifyTool(entry?.name ?? '', entry).external).length;
     // Triage's next steps name only tools the server actually advertises.
     triageOptions.availableTools = new Set(entries.map((entry) => entry?.name).filter((name) => typeof name === 'string'));
     const definitions = [];

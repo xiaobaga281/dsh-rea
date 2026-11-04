@@ -12,7 +12,7 @@ REA（[github.com/morluto/rea](https://github.com/morluto/rea)，npm 包 `rea-ag
 - **就绪检查**：`rea_doctor` 运行逆向服务自己的 `mcp doctor --json`，报告 MCP 子进程能否启动、服务端状态与可用分析引擎。只读，不打开任何目标。
 - **一屏状态**：`rea_status` 用一次调用说清"有没有打开目标、绑了哪个 provider、哪些引擎装好了、因此现在能做什么"。207 个工具里有 55 个依赖"当前文档"，在 headless 引擎下没有目标就会空转——先看一眼比撞一次墙便宜。
 - **结果落盘**：单次结果超过 `maxResultChars`（默认 24 000 字符）时写入 `~/.dsh/rea-artifacts/<会话>/`，模型拿到开头摘要和路径，再用 `rea_read_artifact` 分页读。`binary_session` 这类 70 KB 的结果不再挤爆一轮对话。
-- **变更留痕（1.3.0 起 fail-closed，1.4.0 补齐旁路）**：不再靠硬编码名单——已知只读首词之外的**新工具默认审计**。`gdb_console`、`rizin_debug_command`、`cutter_command`、`observe_native_calls`、`observe_web_execution` 这 5 个命令逃生口在 1.4.0 纳入审计；1.5.0 起 `guard` 覆盖全部 15 个插件自有工具，路径授权改为按**值形态**判定（不再依赖键名白名单）。上游 `destructiveHint` / `openWorldHint` 作为保守下限信号，不当权威分类器（207 个里 202 个 `readOnlyHint=false`）。**157 个只读工具**允许并发调用，并由 `maxConcurrentReadTools` 限流；真实装配共 **222 工具 + 6 路由**。
+- **变更留痕（1.3.0 起 fail-closed，1.4.0 补齐旁路）**：不再靠硬编码名单——已知只读首词之外的**新工具默认审计**。`gdb_console`、`rizin_debug_command`、`cutter_command`、`observe_native_calls`、`observe_web_execution` 这 5 个命令逃生口在 1.4.0 纳入审计；1.5.0 起 `guard` 覆盖全部 15 个插件自有工具，路径授权改为按**值形态**判定（不再依赖键名白名单）。上游 `destructiveHint` / `openWorldHint` 作为保守下限信号，不当权威分类器（207 个里 202 个 `readOnlyHint=false`）。**157 个只读工具**允许并发调用，并由 `maxConcurrentReadTools` 限流；真实装配共 **226 工具 + 6 路由**。
 - **完整 schema 渐进展开（1.4.0）**：后台独立子进程缓存全部完整输入/输出 schema 与注解（约 3 MB 内存、零上下文开销）。`rea_catalog({tool, path, includeOutput})` 按 JSON Path 逐字段展开；165 KB 的 `compare_web_captures` 默认只给约 1 KB 轮廓。
 - **结构化结果与工作流（1.4.0）**：每次调用把 `evidence_id` / 置信度 / 覆盖度 / provider 写进跨会话索引，用 `rea_query_results` 复用；`rea_batch_triage` 批量初筛、`rea_diff_hint` 粗配、`rea_fuzz_harness` 生成模板、`rea_run_playbook` 用可信脚本把多次往返压成一次调用。
 - **静态对抗初筛**：`rea_triage(path)` 纯本地、不执行样本：整体与分块熵、PE/ELF/Mach-O 节区与入口/导入异常、13 类壳与混淆器签名、字符串与单字节 XOR 探测、可选 YARA，输出带证据的 packed / obfuscated / unpacked 判定与下一步建议。
@@ -108,6 +108,7 @@ Java 探测会枚举 `JAVA_HOME`、各发行版的安装目录（`C:\Program Fil
 | `pinnedSha256` | 空 | 64 位十六进制摘要。设置后，Release 公布的摘要与它不符就拒绝安装（下载前），下载字节也按它校验。 |
 | `maxBackups` | `2` | 自更新保留的 `.bak-*` 份数（0–10），避免每次更新累积 30 MB 备份。 |
 | `updateMirrors` | `[]` | 额外追加的下载镜像前缀，排在自带镜像之后，不会替换官方直连。 |
+| `networkEgressPolicy` | `warn` | 对上游标了 `openWorldHint`/`destructiveHint` 的 108 个工具的策略：`allow` 不干预、`warn` 记录审计、`deny` 直接拒绝。用于分析者侧的外联暴露控制，默认不破坏正常调用。 |
 | `trustedManifestKey` | 空 | minisign 公钥文本。设置后**只接受验签通过的 manifest 来源**（不再把 GitHub Release API 当兜底），验签失败或无 `.minisig` 时检查更新直接失败，绝不静默降级；侧栏显示实际生效的信任级别。配了公钥就必须发布 `update.json.minisig`。 |
 | `playbookDir` | `~/.dsh/rea-playbooks` | 可信 playbook 脚本目录，只接受简单 `.mjs` 文件名。 |
 | `playbookTimeoutMs` | `120000` | 单个 playbook 的墙钟上限（1s–600s）。 |
@@ -126,6 +127,24 @@ Java 探测会枚举 `JAVA_HOME`、各发行版的安装目录（`C:\Program Fil
 | 发布门禁 | `npm run host-matrix` 输出 `dist/host-matrix.json` 并校验文档里的工具数/分类数，数字漂移直接 FAIL |
 | 并发证据 | `npm run concurrency` 对真实子进程做 30 次并发对比（无闸 vs 限流 6） |
 | 报告隔离 | SARIF `message.text` 包裹 `<untrusted-evidence>`，下游 CI 渲染不再直接吃样本文本 |
+
+### 1.5.0 逆向能力与反追踪工具
+
+这一层的定位是**纯本地静态情报**：不执行样本、不调用引擎、不联网；所有样本字符串都以 `<untrusted-*>` 包裹后再进入上下文。
+
+| 工具 | 作用 |
+| --- | --- |
+| `rea_ioc_extract` | 从文件提取去重的结构化 IoC（URL / 域名 / IPv4 / 邮箱 / 注册表键 / PDB 路径 / Windows 路径 / 钱包地址 / UA / 命名管道），解析 **PE 导入表**（DLL + 函数名 + 序号），把高危 API 映射为 ATT&CK 式能力提示，完整 JSON 落盘 |
+| `rea_tracking_surface` | 映射样本**怎么追踪人**：分析/遥测 SDK、广告与设备标识、浏览器与主机指纹 API、位置采集、持久化跟踪状态、剪贴板/通讯录、归因与外联端点；给出分类、严重度、证据与总体等级 |
+| `rea_anti_analysis` | 反调试 / 反 VM / 反沙箱 / 反 Hook / 反 dump / 完整性校验 / TLS 回调的**技术矩阵**：每类附命中证据、防御性分析对策，以及只引用真实广告工具的下一步；不提供任何隐蔽或规避能力 |
+| `rea_sanitize_report` | 分享报告前的**反追踪自检**：`check` 列出本机用户名、家目录、主机名、绝对路径、IP / MAC / 邮箱 / token / 代理凭据等泄露；`sanitize` 替换为稳定占位符并保存干净副本 |
+
+**同时增强**：
+- `rea_triage` 现在输出 PE 导入表摘要（DLL/API 数、高危 API）、IoC 分类计数、追踪面等级、ATT&CK 能力提示；空导入表与高追踪面会进入容器异常清单；建议链会引导到上述三个情报工具。
+- `rea_diff_hint` 从"熵 + 采样字符串"升级为**导入表增量 + 新增网络 IoC + 节区熵变 + 字符串 Jaccard + 4 KB 分块重叠**的四级优先队列，对变体/补丁分析更可用（仍明确不是 CFG 结构 diff）。
+- 侧栏「安全策略」新增外联工具策略与外联工具数；`networkEgressPolicy=deny` 会在 guard 层拒绝这些工具，形成分析者侧的网络暴露闸门。
+
+**边界**：全部是静态字符串/导入表启发式——未使用的 SDK、加密配置、动态解析的 API 都可能导致误报或漏报；能力提示是"能做什么"而非"做过什么"，必须回到反汇编或运行时轨迹验证。插件不执行样本、不连接样本端点、不提供隐蔽注入，也不替代商业引擎的结构比对。
 
 ### 1.4.0 新增工具
 
@@ -207,13 +226,13 @@ scripts/triage-baseline.mjs  初筛校准矩阵（合成 / 有标签语料）
 ## 测试
 
 ```bash
-npm test          # node --test，152 个用例
+npm test          # node --test，162 个用例
 npm run host-matrix       # 真实子进程，三种宿主模式的发布门禁 + 文档数字校验
 npm run concurrency       # 真实子进程并发压测（无闸 vs 限流）
 npm run triage-baseline   # 初筛合成/有标签语料校准
 ```
 
-覆盖：公开名映射、行分帧、配置归一化与子进程环境、工具表增量同步、路由来源校验、结果落盘与分页边界、版本比较与镜像顺序；1.3.0 新增熵与 PE 解析、壳签名、XOR 探测、Markdown/SARIF 出口、fail-closed 分类与会话范围、保留期与敏感模式、钉死摘要端到端、分级提示；1.4.0 新增完整 schema 轮廓与路径展开、结果快照与索引查询、命令逃生口与自有工具 guard、只读并发、图像落盘、不可信数据包裹、DEX/WASM/APK 识别与反分析特征、宿主矩阵、可信 playbook 子进程、SARIF URI/执行状态修正、清单签名验签；1.5.0 新增值形态路径授权（11 个漏网路径键）、签名门禁 fail-closed 与信任级别、结果索引哈希链/容量/截断标记、live/probe 版本戳、二进制证据文本化、只读并发限流、SARIF 不可信文本包裹、文档数字门禁。
+覆盖：公开名映射、行分帧、配置归一化与子进程环境、工具表增量同步、路由来源校验、结果落盘与分页边界、版本比较与镜像顺序；1.3.0 新增熵与 PE 解析、壳签名、XOR 探测、Markdown/SARIF 出口、fail-closed 分类与会话范围、保留期与敏感模式、钉死摘要端到端、分级提示；1.4.0 新增完整 schema 轮廓与路径展开、结果快照与索引查询、命令逃生口与自有工具 guard、只读并发、图像落盘、不可信数据包裹、DEX/WASM/APK 识别与反分析特征、宿主矩阵、可信 playbook 子进程、SARIF URI/执行状态修正、清单签名验签；1.5.0 新增值形态路径授权（11 个漏网路径键）、签名门禁 fail-closed 与信任级别、结果索引哈希链/容量/截断标记、live/probe 版本戳、二进制证据文本化、只读并发限流、SARIF 不可信文本包裹、文档数字门禁；1.5.0 能力增强新增 PE 导入表解析（合成样本回归）、IoC 分类去重、追踪面与反分析矩阵、ATT&CK 能力画像、报告脱敏、差分四级优先队列、外联策略归一化。
 
 ## 安装
 
