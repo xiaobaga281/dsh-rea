@@ -270,3 +270,30 @@
 | 结果形态 | 只讨论体积 | 指出结构化字段与图像块被拍平/丢弃，18 个视觉工具受影响 |
 | 风险边界 | 6 + 2 条 | 新增：间接提示注入、宿主环境耦合静默失效、授权范围旁路、发布说明与实现漂移 |
 | 方案重心 | P0 六项"降成本与风险" | 1.3.0 已全部落地；新 P0 六项聚焦"接住元数据 + 补边界 + 校准初筛" |
+
+---
+
+## 附录 · 1.4.0 落地状态（2026-11-04）
+
+本次评审后按方案实施，版本 `1.4.0`（本地提交，**未发布**，`update.json` 仍指向 1.3.1）。完整测试 144/144；宿主矩阵三种模式（纯 Node / Electron / 授权范围）各装配出 221 工具 + 6 路由，全 PASS。
+
+| 方案项 | 状态 | 实现与实测 |
+| --- | --- | --- |
+| P0-1 元数据与结构化结果管线 | ✅ | `lib/schema-cache.js` 后台探测子进程缓存 207 个完整定义（实测 3 084 KB 内存），`rea_catalog({tool,path,includeOutput})` 按 JSON Path 展开；`compare_web_captures` 完整输入 165 694 字节 → 轮廓 1 076 字符。`lib/result-index.js` 把 `structuredContent` 的 Evidence ID / 置信度 / 覆盖度 / provider 写入 `results.jsonl`，`rea_query_results` 跨会话查询 |
+| P0-2 闸门统一化 | ✅ | 5 个命令逃生口显式归类为变更；`guardTool` 现在也覆盖 7 个插件自有工具（产物目录内路径豁免）；`destructiveHint` 触发轻量审计、`openWorldHint` 用于标注，不覆盖 fail-closed 分类；162 个只读工具 `isConcurrencySafe=true` |
+| P0-3 图像/二进制落盘 | ✅ | `flattenContent()` 收集 image / resource.blob，`artifacts.writeBinary()` 存盘并返回路径、字节数、mimeType；宿主矩阵验证 scoped 模式下 `rea_triage` 越界路径被拒 |
+| P0-4 不可信数据隔离 | ✅ | `markUntrusted()` 转义控制字符与 `<>`、截断、包裹标签；`rea_triage` 默认不回字符串原文；Markdown/SARIF 报告声明不可信内容 |
+| P0-5 宿主兼容性门禁 | ✅ | `npm run host-matrix`：纯 Node / `ELECTRON_RUN_AS_NODE` / 授权范围三模式真实装配，断言子进程环境、工具数、路由数、catalog 可用性、路径授权；输出 Linux 未覆盖提示 |
+| P0-6 triage 校准与建议链 | ✅ | 新增 DEX/WASM/APK(ZIP) 识别、PE overlay / 时间戳 / Authenticode 证书表、6 类反调试反 VM 标记；`nextSteps` 只引用真实广告的工具名，明确"工具面没有进程 dump"；`npm run triage-baseline` 输出合成矩阵并支持 `--corpus` 带标签语料（**合成集识别率 1.0 不代表真实壳样本**） |
+| P1-7 playbook 沙箱 | ✅ | `lib/playbook.js` + worker：子进程 + IPC 代理 `rea.call`，工具白名单、`playbookMaxCalls`、`playbookTimeoutMs`、结果传输上限；只接受目录内 `.mjs` 文件名。明确声明"可信代码，不是防恶意脚本的沙箱" |
+| P1-8 结果库 + 语料模式 | ✅（JSONL 而非 SQLite） | 为避开 Node 版本相关的 `node:sqlite` 实验 API 与原生依赖，改用 append-only JSONL + 尾部有界扫描；`rea_batch_triage` 非递归批量初筛并写索引 |
+| P1-9 协议补强 | ⚠️ 适配层 | `rea_protocol_analyze` 封装 tshark（keylog / follow / 字段）与 `protoc --decode_raw`；缺二进制时精确报告缺失并指向 REA 自带字段级工具，不假装成功。完整 dissector / protobuf 描述符提取仍未做 |
+| P1-10 差分优先 | ✅（粗配层） | `rea_diff_hint` 本地比较熵、节区、采样字符串，输出优先级列表并声明不是结构 diff；函数级匹配仍需 BSim/Diaphora |
+| P1-11 Windows 动态 | ⚠️ 能力探测 | `rea_windows_tools` 用 `where` 只读探测 cdb/TTD/wpr/logman/pdbcopy，不启动调试器、不执行任意命令。完整 cdb 脚本化与 TTD 回放仍需新引擎桥 |
+| P1-12 SARIF 修正 | ✅ | 移除硬编码 `executionSuccessful:true`（改为调用方显式传入），`artifactLocation.uri` 转 `file:///` URI 并百分号编码，附 target 哈希字段与不可信内容标记 |
+| P2-15 反调试静态特征 | ✅ | 并入 triage 的 `antiAnalysis`（debugger-api / PEB / timing / CPUID-hypervisor / sandbox-tools / 反 VM 注册表） |
+| P2-18 签名发布清单 + fuzz 模板 | ✅（部分） | `DSH_REA_MINISIGN_KEY` 生成 `update.json.minisig`，`trustedManifestKey` 让所有 manifest 来源必须验签；`rea_fuzz_harness` 生成 libFuzzer/AFL++ 模板（只生成文本，不编译不执行） |
+| P2-13/14/16 仿真脱壳 / BSim / IDA | ❌ 不落地 | 需要新增 Python 引擎、Ghidra 插件或商业 IDA 授权与脚本桥，属"新引擎"而非插件层改动；本次不假装实现 |
+| P2-17 多模态取证 | ⚠️ 基础已备 | 图像已落盘可带外复核；未把 image block 转发给宿主（宿主是否支持多模态块未做假设） |
+
+**仍未消除的风险**：单函数粒度与全程序图属 REA 引擎层；`pinnedSha256` / minisign 都是可选信任锚，默认安装链路仍摘要与归档同源；反编译文本进入模型上下文的数据外泄问题只能靠 `sensitiveArtifacts` + 本地模型策略缓解；合成校准集不能当作真实检测率对外公布。

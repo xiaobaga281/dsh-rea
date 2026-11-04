@@ -12,7 +12,9 @@ REA（[github.com/morluto/rea](https://github.com/morluto/rea)，npm 包 `rea-ag
 - **就绪检查**：`rea_doctor` 运行逆向服务自己的 `mcp doctor --json`，报告 MCP 子进程能否启动、服务端状态与可用分析引擎。只读，不打开任何目标。
 - **一屏状态**：`rea_status` 用一次调用说清"有没有打开目标、绑了哪个 provider、哪些引擎装好了、因此现在能做什么"。207 个工具里有 55 个依赖"当前文档"，在 headless 引擎下没有目标就会空转——先看一眼比撞一次墙便宜。
 - **结果落盘**：单次结果超过 `maxResultChars`（默认 24 000 字符）时写入 `~/.dsh/rea-artifacts/<会话>/`，模型拿到开头摘要和路径，再用 `rea_read_artifact` 分页读。`binary_session` 这类 70 KB 的结果不再挤爆一轮对话。
-- **变更留痕（1.3.0 起 fail-closed）**：不再靠硬编码名单——已知只读首词之外的**新工具默认审计**，名字含明确写动词的也会审计（补上了原先漏掉的 `instrument_with_frida`、`execute_rizin_command`）。真实工具面上 207 个里 41 个审计、162 个只读。改设备/删除/覆盖的 4 个操作默认关闭，需要 `allowDeviceMutations`。
+- **变更留痕（1.3.0 起 fail-closed，1.4.0 补齐旁路）**：不再靠硬编码名单——已知只读首词之外的**新工具默认审计**。`gdb_console`、`rizin_debug_command`、`cutter_command`、`observe_native_calls`、`observe_web_execution` 这 5 个命令逃生口在 1.4.0 纳入审计；`guard` 同时覆盖 7 个插件自有工具，`allowedTargets` 不再能被 `rea_triage` 绕过。上游 `destructiveHint` / `openWorldHint` 作为保守下限信号，不当权威分类器（207 个里 202 个 `readOnlyHint=false`）。162 个只读工具现在允许并发调用。
+- **完整 schema 渐进展开（1.4.0）**：后台独立子进程缓存全部完整输入/输出 schema 与注解（约 3 MB 内存、零上下文开销）。`rea_catalog({tool, path, includeOutput})` 按 JSON Path 逐字段展开；165 KB 的 `compare_web_captures` 默认只给约 1 KB 轮廓。
+- **结构化结果与工作流（1.4.0）**：每次调用把 `evidence_id` / 置信度 / 覆盖度 / provider 写进跨会话索引，用 `rea_query_results` 复用；`rea_batch_triage` 批量初筛、`rea_diff_hint` 粗配、`rea_fuzz_harness` 生成模板、`rea_run_playbook` 用可信脚本把多次往返压成一次调用。
 - **静态对抗初筛**：`rea_triage(path)` 纯本地、不执行样本：整体与分块熵、PE/ELF/Mach-O 节区与入口/导入异常、13 类壳与混淆器签名、字符串与单字节 XOR 探测、可选 YARA，输出带证据的 packed / obfuscated / unpacked 判定与下一步建议。
 - **证据出口**：`rea_export_report` 把 Evidence bundle 转成 Markdown 报告与 SARIF 2.1.0，覆盖度、未解未知清单、推断边界都写进产物，可归档或接 CI。
 - **产物治理**：结果默认保留 7 天并有容量上限；`sensitiveArtifacts` 让完整结果只回摘要、不落盘；`rea_purge_artifacts` 手动清理。
@@ -84,8 +86,10 @@ Java 探测会枚举 `JAVA_HOME`、各发行版的安装目录（`C:\Program Fil
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
-| `schemaProfile` | `compact` | REA 的 input schema 广告档位。`full` 下 207 个工具的 schema 约 3 MB（≈79 万 token），会挤爆任何上下文预算。 |
-| `outputSchemaProfile` | `off` | 不广告 output schema，省下大量 token；REA 内部仍按完整契约校验返回。 |
+| `schemaProfile` | `compact` | 主子进程广告的 input schema 档位。`full` 会让 207 个工具的 schema 约 652 KB，不进模型上下文但会放大注册表。1.4.0 起完整定义由后台独立探测缓存，不必改这里。 |
+| `outputSchemaProfile` | `off` | 主子进程不广告 output schema；后台探测子进程用 `full` 取回完整输出 schema 供 `rea_catalog({includeOutput:true})` 按需查看。 |
+| `catalogProbe` | `true` | 激活后在后台起一个短生命周期子进程，缓存全部完整输入/输出 schema 与安全注解（约 3 MB 内存，零上下文开销）。失败只降级为 compact 模式，不影响激活。 |
+| `imageCapture` | `true` | 把 REA 返回的 image / 二进制 resource 块写入产物目录并返回路径，不再只给占位文本。 |
 | `toolCallTimeoutMs` | `900000` | 单次调用超时。REA 首次起 Ghidra/Hopper 可能几分钟。取消会话时请求会被 `notifications/cancelled` 撤回，不用等满超时。 |
 | `maxBufferBytes` | `10485760` | stdio 单条消息上限（REA 自己的下限就是 10485760，传更小会被抬回下限）。 |
 | `logLevel` | `info` | 子进程日志级别。 |
@@ -102,6 +106,27 @@ Java 探测会枚举 `JAVA_HOME`、各发行版的安装目录（`C:\Program Fil
 | `pinnedSha256` | 空 | 64 位十六进制摘要。设置后，Release 公布的摘要与它不符就拒绝安装（下载前），下载字节也按它校验。 |
 | `maxBackups` | `2` | 自更新保留的 `.bak-*` 份数（0–10），避免每次更新累积 30 MB 备份。 |
 | `updateMirrors` | `[]` | 额外追加的下载镜像前缀，排在自带镜像之后，不会替换官方直连。 |
+| `trustedManifestKey` | 空 | minisign 公钥文本。设置后 `update.json` 各来源必须同时提供有效的 `update.json.minisig`，签名不过就换源；这是把信任锚移到运维手里的独立通道。 |
+| `playbookDir` | `~/.dsh/rea-playbooks` | 可信 playbook 脚本目录，只接受简单 `.mjs` 文件名。 |
+| `playbookTimeoutMs` | `120000` | 单个 playbook 的墙钟上限（1s–600s）。 |
+| `playbookMaxCalls` | `200` | 单个 playbook 允许发起的 REA 调用次数上限（1–2000）。 |
+| `batchTriageLimit` | `50` | `rea_batch_triage` 单次最多处理的文件数（1–500）。 |
+
+### 1.4.0 新增工具
+
+| 工具 | 作用 |
+| --- | --- |
+| `rea_query_results` | 查跨会话结果索引（工具、时间、Evidence ID、置信度、覆盖度、provider），避免重复分析 |
+| `rea_batch_triage` | 对一个目录做非递归批量静态初筛，输出计数与报告 |
+| `rea_diff_hint` | 两个样本的粗配（熵/节区/采样字符串），明确声明不是结构 diff |
+| `rea_fuzz_harness` | 从崩溃描述生成 libFuzzer/AFL++ 模板，只生成文本、不编译不执行 |
+| `rea_run_playbook` | 运行 `playbookDir` 里的可信 `.mjs` 脚本，把多次往返压成一次调用 |
+| `rea_protocol_analyze` | tshark（TLS keylog / 流重组）与 protoc `decode_raw` 适配层，缺二进制时明确报告 |
+| `rea_windows_tools` | 只读探测 cdb / TTD / wpr / logman / pdbcopy，不启动调试器 |
+
+`rea_catalog` 现在支持 `path`（按 JSON Path 展开一个字段）、`includeOutput`、`includeAnnotations`。最大的 `compare_web_captures` 完整输入 schema 有 165 KB，默认只给约 1 KB 的轮廓，需要细节时逐字段展开。
+
+**Playbook 是受信任代码，不是沙箱**：脚本必须是事先放进目录的文件（不接受对话里的内联代码），在子进程里跑，每次 `rea.call` 都回到父进程过同一套 guard、工具白名单、调用次数与超时限制。它能防止误操作和失控循环，不能防恶意脚本。
 
 ## 版本更新
 
@@ -113,9 +138,9 @@ Java 探测会枚举 `JAVA_HOME`、各发行版的安装目录（`C:\Program Fil
 4. 校验通过才解包、核对包内 `package.json` 的版本，然后把当前插件目录改名为 `.bak-<时间戳>`，把新目录换进去；换入失败会把旧目录改回来。
 5. 安装完成后提示重启会话——新代码在下次加载时生效。
 
-镜像只被当作传输通道，完整性由摘要决定；但摘要与归档**同源**（都来自同一个 GitHub 账号），账号被篡改时校验形同虚设。需要独立保证时设置 `pinnedSha256`：它来自本地配置，与 Release 公布的摘要不一致会在下载前直接拒绝。侧栏会逐条显示每个镜像的成功或失败原因、当前钉死的摘要、保留的备份数，以及「安全策略」板块（授权范围 / 设备写操作 / 敏感产物 / 保留期）。
+镜像只被当作传输通道，完整性由摘要决定；但摘要与归档**同源**（都来自同一个 GitHub 账号），账号被篡改时校验形同虚设。需要独立保证时设置 `pinnedSha256`：它来自本地配置，与 Release 公布的摘要不一致会在下载前直接拒绝。1.4.0 增加可选的 detached signature：发布时用 `DSH_REA_MINISIGN_KEY=<无口令私钥> npm run manifest` 生成 `update.json.minisig` 并作为 Release 资产发布，消费端设置 `trustedManifestKey` 后所有 manifest 来源都必须验签通过。侧栏会逐条显示每个镜像的成功或失败原因、当前钉死的摘要、保留的备份数，以及「安全策略」板块（授权范围 / 设备写操作 / 敏感产物 / 保留期）。
 
-**发布新版本时的顺序**：`npm test` → `npm run pack` → `npm run manifest`（用实际打包产物重写 `update.json` 的版本、大小与摘要）→ 发 Release（说明里带上 `sha256:` 行）→ 提交 `update.json`。少写一步，只用镜像的用户就会看到旧的“最新版本”。
+**发布新版本时的顺序**：`npm test` → `npm run host-matrix`（纯 Node / Electron / 授权范围三种宿主模式各跑一次真实装配）→ `npm run pack` → `npm run manifest` → 发 Release（说明里带上 `sha256:` 行，签名时一并上传 `.minisig`）→ 提交 `update.json`。少写一步，只用镜像的用户就会看到旧的“最新版本”。`npm run triage-baseline` 可随时输出初筛的合成校准矩阵；传 `--corpus /abs/path`（下分 `packed/`、`clean/`）可得到有标签样本的识别率与误报率。
 
 ## 代理
 
@@ -151,21 +176,32 @@ lib/artifacts.js    结果落盘/分页、fail-closed 变更分类、会话范�
 lib/triage.js       纯本地静态对抗初筛（熵/节区/签名/字符串/XOR/YARA）
 lib/export.js       Evidence bundle → Markdown / SARIF 2.1.0
 lib/analysis-tools.js  rea_triage / rea_export_report / rea_purge_artifacts
+lib/schema-cache.js  完整 schema 后台探测缓存 + JSON Path 渐进展开
+lib/result-index.js  跨会话结果索引 + structuredContent 快照
+lib/workflow-tools.js 结果查询 / 语料初筛 / 粗配 / fuzz 模板 / playbook 工具
+lib/playbook.js     可信脚本子进程执行器（IPC 代理 + 调用上限）
+lib/playbook-worker.mjs  playbook 子进程入口
+lib/external-adapters.js tshark/protoc 与 Windows 调试器能力探测
+lib/manifest-signature.js update.json 的 minisign 签名与验签
 lib/update.js       版本检查、多镜像下载、钉死摘要、目录替换
-scripts/update-manifest.mjs  生成 update.json（发布用）
+scripts/update-manifest.mjs  生成 update.json（发布用，可选签名）
+scripts/host-matrix.mjs      宿主兼容性发布门禁
+scripts/triage-baseline.mjs  初筛校准矩阵（合成 / 有标签语料）
 ```
 
 ## 测试
 
 ```bash
-npm test          # node --test，118 个用例
+npm test          # node --test，144 个用例
+npm run host-matrix       # 真实子进程，三种宿主模式的发布门禁
+npm run triage-baseline   # 初筛合成/有标签语料校准
 ```
 
-覆盖：公开名映射、行分帧、配置归一化与子进程环境、工具表增量同步、路由来源校验、结果落盘与分页边界、版本比较与镜像顺序；1.3.0 新增熵与 PE 解析、壳签名、XOR 探测、Markdown/SARIF 出口、fail-closed 分类与会话范围、保留期与敏感模式、钉死摘要端到端（含 7 个真实安装用例）、分级提示。
+覆盖：公开名映射、行分帧、配置归一化与子进程环境、工具表增量同步、路由来源校验、结果落盘与分页边界、版本比较与镜像顺序；1.3.0 新增熵与 PE 解析、壳签名、XOR 探测、Markdown/SARIF 出口、fail-closed 分类与会话范围、保留期与敏感模式、钉死摘要端到端、分级提示；1.4.0 新增完整 schema 轮廓与路径展开、结果快照与索引查询、命令逃生口与自有工具 guard、只读并发、图像落盘、不可信数据包裹、DEX/WASM/APK 识别与反分析特征、宿主矩阵、可信 playbook 子进程、SARIF URI/执行状态修正、清单签名验签。
 
 ## 安装
 
-把 `dsh-rea-1.3.0.tgz` 解压到稳定目录（如 `~/.dsh/plugins/dsh-rea`），通过 Plugin Manager 的 `install_bundle` 选择该目录，或直接把本包加进 profile 的 `dependencies` 与 `bundles`：
+把 `dsh-rea-<version>.tgz` 解压到稳定目录（如 `~/.dsh/plugins/dsh-rea`），通过 Plugin Manager 的 `install_bundle` 选择该目录，或直接把本包加进 profile 的 `dependencies` 与 `bundles`：
 
 ```
 "dsh-rea": "link:<包目录的绝对路径>"
@@ -176,16 +212,19 @@ npm test          # node --test，118 个用例
 ## 发布包
 
 ```bash
-npm test && npm run pack   # → dist/dsh-rea-1.3.0.tgz（package/ 为根）
+npm test && npm run pack   # → dist/dsh-rea-<version>.tgz（package/ 为根）
 ```
 
-包内含 `index.js`、`client.js`、`lib/`、`cordis.patch.yml`、`locale/`、`icon.svg`、`README.md`、`LICENSE`，以及 `vendor/rea-runtime.tgz`（28 MB，136 个包的完整依赖闭包）与它的 SHA-256。`test/` 不进发布包。
+包内含 `index.js`、`client.js`、`lib/*.js` 与 `lib/*.mjs`、`cordis.patch.yml`、`locale/`、`icon.svg`、`README.md`、`LICENSE`，以及 `vendor/rea-runtime.tgz`（28 MB，136 个包的完整依赖闭包）与它的 SHA-256。`test/` 与 `scripts/` 不进发布包。
 
 源码仓库：<https://github.com/xiaobaga281/dsh-rea>
 
 ## 已知边界
 
-- REA 的结果以文本/JSON 为主；图片块（例如截图）以明确占位文本返回，不静默丢弃，也不转成模型可看的图片。嵌入的 resource 块如果有文本内容会被原样并入结果。
+- REA 的 image 块与二进制 resource 块会落盘到产物目录并返回路径，供带外复核；不直接转成模型可看的图片块（宿主是否支持多模态块未做假设）。含文本的 resource 仍原样并入结果。
+- 样本里的字符串、反编译文本、崩溃描述都是**不可信数据**：默认不回字符串原文，`detail`/报告里会包裹、转义、截断并注明「不得当作指令」。
+- `rea_triage` 只识别 PE/ELF/Mach-O 的结构，DEX/APK/WASM 只识别容器不解析内部；加壳判定是启发式，合成校准集的识别率不代表真实壳样本，需带标签语料实测。
+- `rea_protocol_analyze` 与 `rea_windows_tools` 是适配层：外部二进制缺失时明确报缺，不假装能力存在；完整 cdb 断点脚本、TTD 回放、符号执行 / 仿真脱壳 / BSim 相似度 / IDA 接入仍属后续引擎工作。
 - 侧栏准备 Ghidra 需要网络和约 543 MiB 下载空间；解包后还会占用 Ghidra 本身的磁盘空间。
 - 首次启用需要 `tar`（Windows 10+ 与各受支持平台自带）；Linux 上解 zip 还需要 `unzip`，缺失时错误信息会直接说明。
 - WABT 只有 Windows x64 的固定构建；其他平台需要手填 `REA_WABT_BIN_DIRECTORY`。

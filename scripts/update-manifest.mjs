@@ -9,6 +9,8 @@ import { createHash } from 'node:crypto';
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { signManifest } from '../lib/manifest-signature.js';
+
 const root = join(import.meta.dirname, '..');
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const archive = join(root, 'dist', `dsh-rea-${pkg.version}.tgz`);
@@ -34,5 +36,16 @@ const manifest = {
   published_at: new Date().toISOString(),
 };
 
-writeFileSync(join(root, 'update.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+const manifestPath = join(root, 'update.json');
+writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 console.log(`update.json -> ${pkg.version} (${size} bytes, ${digest.slice(0, 16)}…)`);
+
+// Optional detached signature. Without DSH_REA_MINISIGN_KEY nothing changes;
+// with it, publish update.json.minisig as a release asset too.
+const keyPath = process.env.DSH_REA_MINISIGN_KEY;
+if (keyPath) {
+  const outcome = signManifest({ manifestPath, keyPath });
+  console.log(outcome.signed
+    ? `update.json.minisig -> ${outcome.signaturePath} (publish it as a release asset)`
+    : `signature skipped: ${outcome.reason}`);
+}

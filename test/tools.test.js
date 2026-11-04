@@ -57,9 +57,9 @@ test('text blocks are joined and non-text blocks are named rather than dropped',
     { type: 'resource', resource: { uri: 'file:///b', blob: 'AAAA' } },
   ]);
   assert.match(text, /^one\ntwo/);
-  assert.match(text, /image result not forwarded: image.png/);
+  assert.match(text, /\[image result saved as evidence/);
   assert.match(text, /embedded body/);
-  assert.match(text, /embedded binary resource: file:\/\/\/b/);
+  assert.match(text, /binary resource saved as evidence: file:\/\/\/b/);
 });
 
 test('a tool definition carries the server schema and can defer its advertisement', () => {

@@ -1,8 +1,8 @@
 {
   "name": "dsh-rea",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "displayName": "逆向分析",
-  "description": "Reverse-engineering tools for DeepSeek Harness: a deferred 207-tool catalog, local static triage, evidence exports, environment sidebar, and redundant-mirror self-update.",
+  "description": "Reverse-engineering tools for DeepSeek Harness: a deferred 207-tool catalog with full-schema progressive disclosure, structured result index, trusted playbooks, local static triage, evidence exports, environment sidebar, and redundant-mirror self-update.",
   "type": "module",
   "icon": "./icon.svg",
   "exports": {
@@ -16,6 +16,7 @@
     "index.js",
     "client.js",
     "lib/*.js",
+    "lib/*.mjs",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
@@ -27,7 +28,9 @@
   "scripts": {
     "test": "node --test",
     "pack": "npm pack --pack-destination dist",
-    "manifest": "node scripts/update-manifest.mjs"
+    "manifest": "node scripts/update-manifest.mjs",
+    "host-matrix": "node scripts/host-matrix.mjs",
+    "triage-baseline": "node scripts/triage-baseline.mjs"
   },
   "dsh": {
     "bundle": {
