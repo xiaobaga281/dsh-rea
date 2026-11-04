@@ -1,6 +1,6 @@
 {
   "name": "dsh-rea",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "displayName": "逆向分析",
   "description": "Reverse-engineering tools for DeepSeek Harness: a deferred 207-tool catalog, local static triage, evidence exports, environment sidebar, and redundant-mirror self-update.",
   "type": "module",
