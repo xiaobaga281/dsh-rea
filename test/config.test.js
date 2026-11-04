@@ -61,6 +61,19 @@ test('the child environment carries REA settings and withholds unrelated secrets
   assert.equal(env.GITHUB_TOKEN, undefined);
 });
 
+test('the child always runs its Electron-shaped command as plain Node', () => {
+  // The Desktop Host process is the Electron executable launched with
+  // ELECTRON_RUN_AS_NODE=1, and the child is spawned with that same
+  // executable. The allowlist must re-pin the flag: without it the child
+  // boots as a GUI application and exits with code 0 before the MCP
+  // handshake, which silently disabled every REA tool from 1.1.0 on.
+  const env = childEnvironment(resolveConfig({}), { PATH: '/usr/bin' });
+  assert.equal(env.ELECTRON_RUN_AS_NODE, '1');
+  // A parent's own value must not leak through in a wrong form.
+  const leaking = childEnvironment(resolveConfig({}), { PATH: '/usr/bin', ELECTRON_RUN_AS_NODE: '0' });
+  assert.equal(leaking.ELECTRON_RUN_AS_NODE, '1');
+});
+
 test('1.3.0 policy defaults are conservative and opt-in', () => {
   const config = resolveConfig({});
   assert.deepEqual(config.allowedTargets, []);
