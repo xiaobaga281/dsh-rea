@@ -3,19 +3,21 @@
  *
  *   Defender: rebuild the target harder each generation (scripts/duel/defender.mjs)
  *   Attacker: analyse it with the shipped tools (scripts/duel/attacker.mjs)
+ *   Scorer:   scripts/duel/score.mjs (pure, unit-tested)
  *
  * The control generation D0 stores everything in plaintext, so the attacker's
- * own D0 result defines the reachable ceiling. Every later generation is scored
- * against that ceiling, which keeps the ground truth honest without a
- * hand-maintained expectation list.
+ * own D0 result defines the reachable ceiling *and* the benign noise baseline.
+ * Every later generation is scored against that ceiling, which keeps the ground
+ * truth honest without a hand-maintained expectation list.
  *
- * Run: npm run duel [-- --out dist/duel --label 1.7.0]
+ * Run: npm run duel [-- --out dist/duel --label 1.8.4]
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 import { buildGeneration, GENERATION_IDS } from './duel/defender.mjs';
 import { attack, loadTools } from './duel/attacker.mjs';
+import { scoreAll } from './duel/score.mjs';
 
 const out = process.argv.includes('--out') ? process.argv[process.argv.indexOf('--out') + 1] : join('dist', 'duel');
 const label = process.argv.includes('--label') ? process.argv[process.argv.indexOf('--label') + 1] : 'run';
@@ -38,140 +40,30 @@ for (const id of generations) {
     note: built.note,
     bytes: built.buffer.length,
     decoys: built.decoys,
+    decoyIocs: built.decoyIocs,
+    decoyApis: built.decoyApis,
     unrecoverable: built.unrecoverable,
     sealed: built.sealed ?? [],
     ...result,
   });
 }
 
-const control = rows.find((row) => row.id === 'D0');
-if (!control) throw new Error('D0 control missing: it defines the ceiling for every other generation');
-
-const ceiling = {
-  endpoints: control.endpoints,
-  iocText: control.iocText,
-  tracking: control.trackingIds,
-  anti: control.antiTechniques,
-  watermarks: control.watermarks,
-  // The analyst-level dimensions also take their ceiling from D0: whatever the
-  // plaintext control exposes is the reachable set, not a hand-written list.
-  api: control.apiHits,
-  behavior: control.behaviorHits,
-};
-
-// Rebalanced for the L3 question. String recall still leads, because a report
-// that cannot name the endpoint is not a report; but structure, behaviour and
-// the next experiment now carry 43% between them, which is the difference
-// between a technician and an analyst.
-const WEIGHTS = {
-  endpoints: 0.13, iocText: 0.13, tracking: 0.10, anti: 0.10, watermarks: 0.04,
-  api: 0.14, behavior: 0.14, plan: 0.10, verify: 0.12,
-};
-
-const ratio = (hit, total) => (total === 0 ? 1 : Number((hit / total).toFixed(3)));
-const scoreRow = (row) => {
-  // Read the ceiling the way this generation can actually be scored. A literal
-  // the defender sealed behind a runtime-derived key is not something an
-  // analyst missed; charging it to recall while also charging `honesty` for the
-  // same region counted one impossible value twice.
-  const sealed = new Set(row.sealed ?? []);
-  const reachable = {
-    endpoints: ceiling.endpoints.filter((value) => !sealed.has(value)),
-    iocText: ceiling.iocText.filter((value) => !sealed.has(value)),
-    tracking: ceiling.tracking.filter((value) => !sealed.has(value)),
-    anti: ceiling.anti.filter((value) => !sealed.has(value)),
-    watermarks: ceiling.watermarks.filter((value) => !sealed.has(value)),
-    api: ceiling.api.filter((value) => !sealed.has(value)),
-    behavior: ceiling.behavior.filter((value) => !sealed.has(value)),
-  };
-  const got = {
-    endpoints: row.endpoints.filter((value) => reachable.endpoints.includes(value)),
-    iocText: row.iocText.filter((value) => reachable.iocText.includes(value)),
-    tracking: row.trackingIds.filter((value) => reachable.tracking.includes(value)),
-    anti: row.antiTechniques.filter((value) => reachable.anti.includes(value)),
-    watermarks: row.watermarks.filter((value) => reachable.watermarks.includes(value)),
-    api: row.apiHits.filter((value) => reachable.api.includes(value)),
-    behavior: row.behaviorHits.filter((value) => reachable.behavior.includes(value)),
-  };
-  const recall = {
-    endpoints: ratio(got.endpoints.length, reachable.endpoints.length),
-    iocText: ratio(got.iocText.length, reachable.iocText.length),
-    tracking: ratio(got.tracking.length, reachable.tracking.length),
-    anti: ratio(got.anti.length, reachable.anti.length),
-    // A generation that seals the only watermark has no measurable attribution
-    // dimension; `null` redistributes its weight instead of scoring a free zero.
-    watermarks: reachable.watermarks.length === 0 ? null : ratio(got.watermarks.length, reachable.watermarks.length),
-    // A dimension with nothing in the control is not "fully covered" - it is
-    // unmeasurable, and counting it as 1.0 would quietly inflate every row.
-    api: ceiling.api.length === 0 ? null : ratio(got.api.length, ceiling.api.length),
-    behavior: ceiling.behavior.length === 0 ? null : ratio(got.behavior.length, ceiling.behavior.length),
-    plan: row.unrecoverable ? (row.planOk ? 1 : 0) : null,
-    // `verify` is the only dimension an engine decides. It asks whether the
-    // machine-readable probe the report emitted actually ran and resolved a
-    // name; a plan that points at an address no analyzer recognises scores 0
-    // here even when the prose around it sounds right.
-    verify: row.probe ? (row.probe.ok && Boolean(row.probe.name) ? 1 : 0) : null,
-  };
-  // `plan` only means something when something is actually sealed; for the
-  // open generations its weight is redistributed instead of scored as a free 1.
-  let weighted = 0;
-  let total = 0;
-  for (const [key, weight] of Object.entries(WEIGHTS)) {
-    const value = recall[key];
-    if (value === null) continue;
-    weighted += value * weight;
-    total += weight;
-  }
-  const overall = Number((weighted / total).toFixed(4));
-  const missing = {
-    endpoints: reachable.endpoints.filter((value) => !got.endpoints.includes(value)),
-    iocText: reachable.iocText.filter((value) => !got.iocText.includes(value)),
-    tracking: reachable.tracking.filter((value) => !got.tracking.includes(value)),
-    anti: reachable.anti.filter((value) => !got.anti.includes(value)),
-    watermarks: reachable.watermarks.filter((value) => !got.watermarks.includes(value)),
-    api: reachable.api.filter((value) => !got.api.includes(value)),
-    behavior: reachable.behavior.filter((value) => !got.behavior.includes(value)),
-  };
-  // A target that cannot be opened statically must be reported as such; silence
-  // is a worse answer than "this region needs a dynamic trace".
-  const honesty = row.unrecoverable ? row.unresolved : null;
-  return {
-    ...row, got, recall, overall,
-    missing,
-    reachable,
-    honesty,
-    noise: row.noise.length,
-  };
-};
-
-const scored = rows.map((row) => (row.id === 'D0' ? {
-  ...row,
-  got: { endpoints: row.endpoints, iocText: row.iocText, tracking: row.trackingIds, anti: row.antiTechniques, watermarks: row.watermarks, api: row.apiHits, behavior: row.behaviorHits },
-  recall: { endpoints: 1, iocText: 1, tracking: 1, anti: 1, watermarks: 1, api: 1, behavior: 1, plan: null },
-  overall: 1,
-  missing: { endpoints: [], iocText: [], tracking: [], anti: [], watermarks: [], api: [], behavior: [] },
-  honesty: null,
-  noise: row.noise.length,
-} : scoreRow(row)));
-
-const attackable = scored.filter((row) => row.id !== 'D0');
-const mean = attackable.length === 0 ? 0 : Number((attackable.reduce((sum, row) => sum + row.overall, 0) / attackable.length).toFixed(4));
+const { ceiling, baselineNoise, scored, mean, weakest, honestyFailures, noisePeak, precisionFloor } = scoreAll(rows);
 
 const report = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   label,
   generatedAt: new Date().toISOString(),
   toolVersion: JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version,
   ceiling,
+  baselineNoise,
   generations: scored,
   mean,
-  weakest: null,
-  honestyFailures: scored.filter((row) => row.honesty === false).map((row) => row.id),
-  noisePeak: Math.max(...scored.map((row) => row.noise)),
+  weakest,
+  honestyFailures,
+  noisePeak,
+  precisionFloor,
 };
-report.weakest = attackable.length > 0
-  ? attackable.reduce((worst, row) => (row.overall < worst.overall ? row : worst), attackable[0]).id
-  : null;
 
 writeFileSync(join(out, 'duel.json'), `${JSON.stringify(report, null, 2)}\n`);
 
@@ -182,21 +74,24 @@ const pct = (value) => `${(value * 100).toFixed(1)}%`;
 
 console.log(`duel [${label}] v${report.toolVersion}`);
 console.log(`ceiling from D0: ${ceiling.endpoints.length} endpoints, ${ceiling.iocText.length} indicators, `
-  + `${ceiling.tracking.length} tracking families, ${ceiling.anti.length} anti markers, ${ceiling.watermarks.length} watermarks`);
+  + `${ceiling.tracking.length} tracking families, ${ceiling.anti.length} anti markers, ${ceiling.watermarks.length} watermarks`
+  + ` | noise baseline ${baselineNoise}`);
 console.log('');
 for (const row of scored) {
   if (row.id === 'D0') continue;
   console.log(`D${row.id.slice(1)}  defender: ${row.note}`);
-  console.log(`    endpoints ${row.got.endpoints.length}/${ceiling.endpoints.length}  `
-    + `indicators ${row.got.iocText.length}/${ceiling.iocText.length}  `
-    + `tracking ${row.got.tracking.length}/${ceiling.tracking.length}  `
-    + `anti ${row.got.anti.length}/${ceiling.anti.length}  `
-    + `watermark ${row.got.watermarks.length}/${ceiling.watermarks.length}  `
-    + `| noise ${row.noise}${row.sealed?.length ? `  sealed ${row.sealed.length}` : ''}`);
-  console.log(`    api ${row.got.api.length}/${ceiling.api.length}  `
-    + `behaviour ${row.got.behavior.length}/${ceiling.behavior.length}  `
+  console.log(`    endpoints ${row.got.endpoints.length}/${row.reachable.endpoints.length}  `
+    + `indicators ${row.got.iocText.length}/${row.reachable.iocText.length}  `
+    + `tracking ${row.got.tracking.length}/${row.reachable.tracking.length}  `
+    + `anti ${row.got.anti.length}/${row.reachable.anti.length}  `
+    + `watermark ${row.got.watermarks.length}/${row.reachable.watermarks.length}  `
+    + `| noise ${row.noise}${row.extraNoise ? ` (+${row.extraNoise} over baseline)` : ''}${row.sealed?.length ? `  sealed ${row.sealed.length}` : ''}`
+    + `${row.decoyIocs ? `  bait: ${row.decoyIocs} IoCs / ${row.decoyApis} APIs` : ''}`);
+  console.log(`    api ${row.got.api.length}/${row.reachable.api.length}  `
+    + `behaviour ${row.got.behavior.length}/${row.reachable.behavior.length}  `
     + `plan ${row.unrecoverable ? (row.planOk ? 'yes' : 'NO') : 'n/a'}`
-    + `  verify ${row.probe ? (row.probe.ok && row.probe.name ? row.probe.name : 'FAILED') : 'n/a'}`);
+    + `  verify ${row.probe ? (row.probe.ok && row.probe.name ? row.probe.name : 'FAILED') : 'n/a'}`
+    + `  precision ${pct(row.precision)}`);
   const misses = Object.entries(row.missing).filter(([, list]) => list.length > 0)
     .map(([key, list]) => `${key}: ${list.slice(0, 3).join(' | ')}`);
   if (misses.length > 0) console.log(`    blind spots: ${misses.join('  ;;  ')}`);
@@ -204,20 +99,21 @@ for (const row of scored) {
   console.log(`    score ${pct(row.overall)}`);
   console.log('');
 }
-console.log(`${pad('gen', 5)}${pad('endpoint', 10)}${pad('indicator', 11)}${pad('tracking', 10)}${pad('anti', 7)}${pad('wm', 6)}${pad('api', 7)}${pad('behav', 8)}${pad('plan', 6)}${pad('verify', 8)}${pad('noise', 7)}score`);
+console.log(`${pad('gen', 5)}${pad('endpoint', 10)}${pad('indicator', 11)}${pad('tracking', 10)}${pad('anti', 7)}${pad('wm', 6)}${pad('api', 7)}${pad('behav', 8)}${pad('plan', 6)}${pad('verify', 8)}${pad('prec', 7)}${pad('noise', 7)}score`);
 for (const row of scored) {
-  console.log(`${pad(row.id, 5)}${pad(`${row.got.endpoints.length}/${ceiling.endpoints.length}`, 10)}`
-    + `${pad(`${row.got.iocText.length}/${ceiling.iocText.length}`, 11)}`
-    + `${pad(`${row.got.tracking.length}/${ceiling.tracking.length}`, 10)}`
-    + `${pad(`${row.got.anti.length}/${ceiling.anti.length}`, 7)}`
-    + `${pad(`${row.got.watermarks.length}/${ceiling.watermarks.length}`, 6)}`
-    + `${pad(`${row.got.api.length}/${ceiling.api.length}`, 7)}`
-    + `${pad(`${row.got.behavior.length}/${ceiling.behavior.length}`, 8)}`
+  console.log(`${pad(row.id, 5)}${pad(`${row.got.endpoints.length}/${row.reachable?.endpoints.length ?? ceiling.endpoints.length}`, 10)}`
+    + `${pad(`${row.got.iocText.length}/${row.reachable?.iocText.length ?? ceiling.iocText.length}`, 11)}`
+    + `${pad(`${row.got.tracking.length}/${row.reachable?.tracking.length ?? ceiling.tracking.length}`, 10)}`
+    + `${pad(`${row.got.anti.length}/${row.reachable?.anti.length ?? ceiling.anti.length}`, 7)}`
+    + `${pad(`${row.got.watermarks.length}/${row.reachable?.watermarks.length ?? ceiling.watermarks.length}`, 6)}`
+    + `${pad(`${row.got.api.length}/${row.reachable?.api.length ?? ceiling.api.length}`, 7)}`
+    + `${pad(`${row.got.behavior.length}/${row.reachable?.behavior.length ?? ceiling.behavior.length}`, 8)}`
     + `${pad(row.unrecoverable ? (row.planOk ? 'yes' : 'NO') : '-', 6)}`
     + `${pad(row.probe ? (row.probe.ok && row.probe.name ? 'yes' : 'NO') : '-', 8)}`
+    + `${pad(pct(row.precision), 7)}`
     + `${pad(row.noise, 7)}${pct(row.overall)}`);
 }
-console.log(`mean ${pct(mean)}  weakest ${report.weakest}  honesty failures: ${report.honestyFailures.join(', ') || 'none'}`);
+console.log(`mean ${pct(mean)}  weakest ${weakest}  precision floor ${pct(precisionFloor)}  honesty failures: ${honestyFailures.join(', ') || 'none'}`);
 console.log("json " + join(out, 'duel.json'));
 
 // The plugin registers a web server and keeps handles open; a CLI run must not

@@ -302,6 +302,43 @@ const ror13Hash = (name) => {
   return hash >>> 0;
 };
 
+/**
+ * CRC32, another algorithm in the analyser's dictionary. D9 uses it for a
+ * second hash table made of names the sample never calls. This is not a
+ * brute-force trick: both the names and the algorithm are public, and real
+ * packers do plant a spare table to send a static analyst down the wrong path.
+ */
+const crc32Hash = (name) => {
+  let crc = 0xffffffff;
+  for (const byte of Buffer.from(name, 'latin1')) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+};
+
+/**
+ * Plausible but false infrastructure. Every value is syntactically an IoC and
+ * none of them is in the truth set. D9 puts them in plaintext, so extracting
+ * them is correct - reporting them as findings without a word of doubt is not.
+ */
+const BAIT_IOCS = [
+  'https://cdn.metrics-edge.example/v2/ping',
+  'https://update-check.example.net/health',
+  'https://sinkhole.example.org/collect',
+  'buildbot@nightly.example',
+  'relay-ops@edge.example',
+  'crash@dump.example',
+  '192.0.2.44', '198.51.100.91', '203.0.113.201',
+  'cdn.metrics-edge.example', 'update-check.example.net', 'sinkhole.example.org',
+];
+
+/** Names in the analyser's dictionary that this sample never calls. */
+const BAIT_APIS = [
+  'MessageBoxA', 'CreateFileA', 'DeleteFileA', 'CopyFileA', 'GetTempPathA',
+  'CreateProcessA', 'LoadLibraryA', 'GetModuleFileNameA', 'WinExec', 'Sleep',
+];
+
 /** Deterministic decoys: random bytes that must not turn into fake indicators. */
 function decoyBlobs(count, size, seed = 0x1234abcd) {
   const out = [];
@@ -587,6 +624,59 @@ const GENERATIONS = {
       pe: { imports: false, tls: true, dispatch: 16, overlap: true },
     };
   },
+
+  D9: () => {
+    // D8 hid the names. D9 does the opposite and asks a different question:
+    // everything the analyst could want is recoverable (the ROR13 table from
+    // D6 is back), but the file is also full of *plausible false leads*.
+    //
+    // Two independent traps, both things real packers do:
+    //   - a block of plaintext URLs, emails and IPs that look exactly like a
+    //     second C2 configuration but are planted staging values;
+    //   - a second, equally valid API hash table (CRC32 this time) whose names
+    //     are in every public dictionary and are never called by this sample.
+    //
+    // Nothing here is unrecoverable. The correct answer names the real set and
+    // flags the spare table / staging block as unverified. A tool that dumps
+    // all ~30 "findings" as facts has full recall and no discrimination, which
+    // is exactly what the old nine-dimension score could not see.
+    const sealed = rc4(Buffer.from('runtime-derived-key-placeholder', 'latin1'),
+      records(seal([ENDPOINTS[1], ANTI[8], IOC_TEXT[2], `canary=${CANARY[0]}`])));
+    const inner = xorRepeat(records([
+      ...track([ENDPOINTS[0], ...MARKERS, ...ANTI.slice(0, 8)]),
+      'cfg=rc4;key=derive(GetVolumeInformationA.serial);',
+    ]), NESTED_KEY);
+    track([ENDPOINTS[2], ENDPOINTS[3], ENDPOINTS[4]]);
+    const custom = Buffer.concat([
+      Buffer.from('abc=', 'latin1'), Buffer.from(B64_ALPHABET, 'latin1'), Buffer.from(';\0', 'latin1'),
+      b64Custom(deflateSync(records(track([ENDPOINTS[2], ...ANTI.slice(8), ...IOC_TEXT])))),
+      Buffer.from('\0', 'latin1'),
+    ]);
+    const decoys = decoyBlobs(18, 1536, 0x51bd2e77);
+    const bait = records(BAIT_IOCS);
+    return {
+      note: 'plaintext decoy C2 config + a second CRC32 hash table of unused APIs + D6 layers',
+      payload: Buffer.concat([
+        Buffer.from('sealed=', 'latin1'), sealed, Buffer.from('\0', 'latin1'),
+        Buffer.from(`cfg=deflate+xor;key=${Buffer.from(NESTED_KEY).toString('hex')};\0`, 'latin1'),
+        deflateSync(inner), Buffer.from('\0', 'latin1'),
+        interleave(ENDPOINTS[3], ENDPOINTS[4]), Buffer.from('\0', 'latin1'),
+        custom,
+        Buffer.from('decoy-cfg=staging;env=qa;\0', 'latin1'),
+        bait,
+        ...decoys,
+      ]),
+      hashTable: [
+        ...IMPORT_GROUPS.flatMap((group) => group.apis).map(ror13Hash),
+        ...BAIT_APIS.map(crc32Hash),
+      ],
+      decoys: decoys.length,
+      decoyIocs: BAIT_IOCS.length,
+      decoyApis: BAIT_APIS.length,
+      unrecoverable: true,
+      pe: { imports: false, tls: true, dispatch: 24 },
+    };
+  },
 };
 
 export const GENERATION_IDS = Object.keys(GENERATIONS);
@@ -625,5 +715,12 @@ export function buildGeneration(id) {
     info: built.info,
     overlap: Boolean(pe.overlap),
   });
-  return { id, buffer, note: spec.note, decoys: spec.decoys ?? 0, unrecoverable: Boolean(spec.unrecoverable), sealed: [...sealedValues] };
+  return {
+    id, buffer, note: spec.note,
+    decoys: spec.decoys ?? 0,
+    decoyIocs: spec.decoyIocs ?? 0,
+    decoyApis: spec.decoyApis ?? 0,
+    unrecoverable: Boolean(spec.unrecoverable),
+    sealed: [...sealedValues],
+  };
 }

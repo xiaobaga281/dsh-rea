@@ -137,6 +137,55 @@ email G@I...mAC       email GGGFG@GG.HPd     domain gXZ.cN
 
 安装位置：`<repo>/.tools/`（`ghidra_12.1.4_PUBLIC` + `jdk-21.0.13+9`），C 盘只留 `rea-engines/config.json` 里的两个路径字符串。若宿主限制子进程只能写工作区，`TMP`/`TEMP`/`APPDATA` 必须一并指过去，否则 REA 的私有运行目录会让 JVM 在写 `java_home.save` 时被拒，Ghidra 会误报「找不到 JDK」。
 
+## 1.8.4：第十个维度，和一代专门说假话的样本
+
+1.8.3 末尾留了一个待办：九维评分只罚漏报。D2 多报两条噪声、D9 把十几个诱饵当事实，分数都不动。这一轮补上精确率，并造了 D9 去证明它真的能抓到。
+
+### precision 的算法与自证方式
+
+| 项 | 取值 | 理由 |
+| --- | --- | --- |
+| 基线 | 控制代 D0 的噪声数（8） | 明文无保护样本上的噪声就是工具的「良性闲聊」，不是手写期望 |
+| 容差 | 3 | 控制代自身波动；解码通道会合理多出 1–2 条（URL→host、email→domain） |
+| 尺度 | 8 | 每多 8 条额外候选，precision 减半 |
+| 权重 | 0.12，其余九维 ×0.88 | 零额外噪声的代际分数不变，不重写历史序列 |
+
+评分规则从 `scripts/duel.mjs` 抽到 `scripts/duel/score.mjs`，11 个单测固定住：权重和为 1、满分行不受新维度影响、sealed 从可达集合移除、全封维度记 `null`、`null` 维度重分配而不是记 0。
+
+### D9：可恢复，但假货比真货多
+
+D8 的边界是「信息不可达」；D9 换一条轴——**全部可达，但判断力被攻击**：
+
+- 12 条明文诱饵 IoC（3 URL / 3 email / 3 IP / 3 域名），格式合法，全部不在真值集；
+- 第二张哈希表：CRC32 算的 10 个「字典里有、样本从不调用」的 API，紧挨着 D6 的 ROR13 真表；
+- 结构沿用 D6（TLS 回调、24 项派发表、无导入目录），所以召回侧没有借口。
+
+| 指标 | D6（无诱饵） | D9（有诱饵） |
+| --- | --- | --- |
+| endpoint / indicator | 4/4 · 5/5 | 4/4 · 5/5 |
+| api / behaviour | 9/9 · 6/6 | 9/9 · 6/6 |
+| 噪声 | 7 | 22 |
+| precision | 100% | **42.1%** |
+| 总分 | 89.0%（verify 一次假声明） | 91.9% |
+
+同样一份报告，九维评分会给 D9 100%。它现在拿 91.9%，差的 8.1% 全在判断力上。
+
+### D9 打回的三处缺陷
+
+1. **「confirmed」是反的**。`url (3 confirmed, 4 recovered)`：3 条 confirmed 全是明文诱饵，4 条真正从配置解码出来的反而是 recovered。工具把「容易被看见」当成了「可信」。现在叫 `observed in plaintext` / `decoded`，每条明文挂 `— unverified`，并在报告里写明清白：静态提取分不清活跃 C2、投放诱饵与死字符串。
+2. **随机字节被当成 email**。`J@nC.NDH`、`ID@qo.HIplXO`、`bido@ihl.xml` 代代出现。email 规则加 TLD 白名单、域名段必须小写后全部消失，真实地址一条没少。
+3. **混合算法被描述成一个算法**。`19 names matched, and ror13 fits those`——19 个名字横跨 ror13 与 crc32。现在按算法分组，并明确「至少一组是诱饵」，`structure:` 行也补了 `mixed algorithms: likely separate or decoy tables, names unverified`。
+
+### 一个必须说清的局限
+
+D9（91.9%）高于 D8（82.5%）。这不是 bug：D8 缺的是能力（api+behaviour 合计 0.28），D9 缺的是判断力（0.12）。加权总分会把两者混成一个数，所以 `precision floor` 单列在报告里——「满嘴胡话但全都提到」不该因为总分更高而看起来更好。
+
+### 未解决的
+
+- D8 的盐仍不可达，`api 1/9` 是真实能力缺口；
+- API 诱饵没有并入加权分数（D0 导入表与哈希代际没有同源基线），改由报告诚实度与回归测试覆盖；
+- `verify` 继续 `n/a`：REA 会清空所有 JVM 注入变量，不改第三方产物就塞不进 `-Dapplication.tempdir`。
+
 ## 1.8.3：评分先自证，再谈能力
 
 1.8.2 的 `verify` 在这一轮直接失效：所有代的探针全部 FAILED，`verify` 记 0，均值从 94.5% 掉到 90.0%。原因不是分析能力退化，而是**引擎在这台机器上根本起不来**：Ghidra 的 JVM 无法在 REA 的私有运行目录里创建 `<user>-ghidra` 临时目录。用 REA 自带的 `rea decompile` 复现同样失败，确认是上游 Windows 限制，与本插件的集成无关。
