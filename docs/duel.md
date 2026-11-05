@@ -137,6 +137,62 @@ email G@I...mAC       email GGGFG@GG.HPd     domain gXZ.cN
 
 安装位置：`<repo>/.tools/`（`ghidra_12.1.4_PUBLIC` + `jdk-21.0.13+9`），C 盘只留 `rea-engines/config.json` 里的两个路径字符串。若宿主限制子进程只能写工作区，`TMP`/`TEMP`/`APPDATA` 必须一并指过去，否则 REA 的私有运行目录会让 JVM 在写 `java_home.save` 时被拒，Ghidra 会误报「找不到 JDK」。
 
+## 1.8.5：把「不可达」拆成「没试到」
+
+1.8.4 的结论写得很干脆：D8 的盐被密封，9 个 API 名静态不可恢复，`api 1/9` 是真实能力缺口。这一轮推翻了它。
+
+### 手工三分钟，工具三个月
+
+D8 的配置在 `cfg=deflate+xor;key=2b8d41f0;` 后面。手工解：
+
+```
+header → key = 2b8d41f0
+inflate(payload) → 709 bytes
+xor(result, key) → /https://telemetry...   FirebaseAnalytics   ... salt=0x5d3a91c7
+```
+
+工具前两步都做了（`inflateCandidates` 找得到 `at 820, zlib, 709 bytes`），第三步没做：
+
+- XOR 阶梯只在第 1 层（`depth === 0`）跑；
+- 嵌套层只跑 `inflateCandidates` 和单字节 XOR 的语义锚点判定，不会拿 4 字节重复键去试；
+- 而 key 就写在 header 里，明明白白。
+
+### 修法：让 header 从注释变成指令
+
+| 层 | 改动 |
+| --- | --- |
+| 字符串 | 容器阶段读 `cfg=…xor…;key=<hex>;`，用声明的 key 解 inflate 结果后递归挖（hex 2–8 字节、前 4 KiB） |
+| 哈希 | `buildHashIndex({ salt })` 为每个字典名加一条 `hash ^ salt`，算法标 `+salt` |
+| 结构 | `structureProfile(bytes, { salt })`，`hashedApis.salt` 随结果上报 |
+| 编排 | triage 先解字符串、取 `salt=0x…`，再解析导入与结构；`cfg=`/`salt=` 行钉在隐藏字符串列表头部 |
+| 文案 | `mul31-xor-2f with salt 0x5d3a91c7`，不再把 `+salt` 当算法名 |
+
+### 结果
+
+| 代际 | api | behav | score（1.8.4 → 1.8.5） |
+| --- | --- | --- | --- |
+| D8 | 1/9 → **9/9** | 4/6 → **6/6** | 82.5% → **100%** |
+| D6 | 9/9 | 6/6 | 89.0%（不变，唯一 verify 假声明） |
+| D9 | 9/9 | 6/6 | 91.9%（不变，precision 42.1%） |
+
+十代均值 95.9% → **97.9%**，weakest 从 D8 变成 D6。
+
+### 引擎：四个缺口，三个能绕
+
+`verify` 长期 `n/a` 的根因也查到了底。Ghidra 在 REA 的私有运行目录里依次要：
+
+1. `tmp/<user>-ghidra` —— 可用 `-Dapplication.tempdir` 绕；
+2. `cache/<user>-ghidra` —— 可用 `-Dapplication.cachedir` 绕；
+3. `config/<user>-ghidra/<release>` —— 可用 `-Dapplication.settingsdir` 绕（但 REA 预创建的是 `config/ghidra`，路径假设本身不对）；
+4. `<root>/ghidra.log` —— **绕不过**：REA 用 `-log` 把它交给 analyzeHeadless，Ghidra 据此 `setApplicationLogFile`，覆盖任何 `-DlogFilename`。
+
+我逐个验证过前三个（错误确实依次推进），第四个卡在 `Null object returned for RollingFile`。REA 又会清空 `JAVA_TOOL_OPTIONS`/`_JAVA_OPTIONS`/`JDK_JAVA_OPTIONS`，所以不改打包产物就进不去。验证完把引擎配置原样恢复，`classifyEngineFailure` 改成按目录分类上报。
+
+### 边界
+
+- 只有**样本自己声明** key / salt 时这条链才成立。没声明的盐仍不可达。
+- `verify` 继续 `n/a`。
+
 ## 1.8.4：第十个维度，和一代专门说假话的样本
 
 1.8.3 末尾留了一个待办：九维评分只罚漏报。D2 多报两条噪声、D9 把十几个诱饵当事实，分数都不动。这一轮补上精确率，并造了 D9 去证明它真的能抓到。

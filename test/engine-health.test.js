@@ -17,6 +17,26 @@ test('a JVM that cannot create its scratch directory is named as such', () => {
   assert.doesNotMatch(classified.reason, /版本过低|too old/);
 });
 
+test('the failing directory is named, because each one is a separate gate', () => {
+  // Ghidra asks REA's private runtime for temp, cache, config and a log file in
+  // turn. Fixing one only moves the error to the next, so the report has to say
+  // which one it died on.
+  const temp = classifyEngineFailure('Failed to create directory: C:/Temp/rea-ghidra-x/tmp/25616-ghidra');
+  assert.equal(temp.directory, 'tmp');
+  const cache = classifyEngineFailure('Failed to create directory: C:/Temp/rea-ghidra-x/cache/25616-ghidra');
+  assert.equal(cache.directory, 'cache');
+  assert.match(cache.reason, /cache\/<user>-ghidra/);
+  const config = classifyEngineFailure('Failed to create directory: C:/Temp/rea-ghidra-x/config/25616-ghidra/ghidra_12.1.4_PUBLIC');
+  assert.equal(config.directory, 'config');
+  assert.equal(config.code, 'jvm-scratch-denied');
+});
+
+test('a log file the JVM cannot create is its own kind', () => {
+  const log = classifyEngineFailure('main ERROR Unable to create file C:/Temp/rea-ghidra-x/ghidra.log');
+  assert.equal(log.code, 'jvm-log-denied');
+  assert.match(log.reason, /-log/);
+});
+
 test('a missing JDK is a different code with different advice', () => {
   const classified = classifyEngineFailure('JDK 21+ (64-bit) could not be found and must be manually chosen!');
   assert.equal(classified.code, 'jdk');

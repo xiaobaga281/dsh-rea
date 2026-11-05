@@ -127,6 +127,46 @@ Java 探测会枚举 `JAVA_HOME`、各发行版的安装目录（`C:\Program Fil
 | `playbookMaxCalls` | `200` | 单个 playbook 允许发起的 REA 调用次数上限（1–2000）。 |
 | `batchTriageLimit` | `50` | `rea_batch_triage` 单次最多处理的文件数（1–500）。 |
 
+### 1.8.5 那句「盐不可达」是错的
+
+1.8.4 把 D8 记成「盐被密封，9 个 API 名没有任何静态方法能恢复」，并把它当作诚实的能力边界写进了文档。这一轮把它推翻了：**盐一直在文件里，只是工具读到了钥匙却没有用。**
+
+#### 三处断点，一条链
+
+D8 的配置放在 `cfg=deflate+xor;key=2b8d41f0;` 后面。手工打开只有三步：读 header 里的 key、解 DEFLATE、用 key 异或。
+
+工具前两步都能做，唯独第三步没做：容器解压出来的字节是高熵，而 XOR 阶段只在第 1 层跑、且只试单字节 key。于是 `salt=0x5d3a91c7` 看不见，哈希表的 9 个名字解不出，报告写「算法未知」。
+
+#### 改动
+
+| 位置 | 改了什么 |
+| --- | --- |
+| `lib/strings.js` | 容器阶段读取 `cfg=…xor…;key=<hex>;`，用声明的 key 解 inflate 结果后再挖一层。限制 hex 2–8 字节、只在前 4 KiB 找，避免把无关文本里的 `key=` 当成指令 |
+| `lib/api-hash.js` | `buildHashIndex` / `recoverHashedApis` 支持 `salt`：每个名字多一条 `hash ^ salt` 索引，算法标 `+salt`；`resolveImports` 透传 |
+| `lib/structure.js` | `structureProfile(bytes, { salt })`，输出 `hashedApis.salt` |
+| `lib/triage.js` | 先解字符串、提取 `salt=0x…`，再解析导入与结构；隐藏字符串列表优先保留 `cfg=` / `salt=` 行，不让截断把它丢掉 |
+| `lib/plan.js` / `lib/analysis-tools.js` | 报告写 `mul31-xor-2f with salt 0x5d3a91c7`，而不是把 `+salt` 当成算法名 |
+
+#### 结果
+
+D8：`api 1/9 → 9/9`，`behaviour 4/6 → 6/6`，**82.5% → 100%**。
+
+十代均值 **97.9%**（上一轮 95.9%），weakest 变成 D6 的 89.0%（唯一一次 verify 假声明），precision floor 42.1%，honesty failures 0。历史代际一分未变——D0–D5、D7 仍是 100%。
+
+#### 引擎：四个缺口，三个能绕，一个不能
+
+顺手把 `verify` 为什么长期 `n/a` 查到了底。Ghidra 的 JVM 在 REA 的私有运行目录里要四个位置：`tmp`、`cache`、`config`、`ghidra.log`。
+
+- 前三个可以用 Ghidra 自己的 `application.tempdir` / `application.cachedir` / `application.settingsdir` 覆盖——逐个验证过，错误会依次推进（temp → cache → config）；
+- 第四个不行：REA 用 `-log <root>/ghidra.log` 传给 analyzeHeadless，Ghidra 据此 `setApplicationLogFile`，覆盖任何 `-DlogFilename`。
+
+REA 在启动 JVM 前还会清空 `JAVA_TOOL_OPTIONS` / `_JAVA_OPTIONS` / `JDK_JAVA_OPTIONS`，所以不改它的打包产物就进不去。`classifyEngineFailure` 现在会说出具体是哪个目录（`tmp` / `cache` / `config` / `log`），而不是笼统的「上游 Windows 限制」。验证完已把引擎配置原样恢复。
+
+#### 边界
+
+- 这条链只在**样本自己声明了 key 或 salt** 时生效。没有声明的盐仍然不可达——那是真的不可达，不是没试。
+- `verify` 仍是 `n/a`（原因见上），健康账本继续按实际情况降级。
+
 ### 1.8.4 只罚漏报的评分，看不见「满嘴胡话」
 
 1.8.3 收尾时留了一句：下一步做 D9 之前，得先给评分加精确率，因为九维评分**只罚漏报，不罚乱报**。这一轮补上了，D9 也真的把那个缺陷照了出来。
