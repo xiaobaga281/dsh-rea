@@ -19,6 +19,7 @@
     "lib/*.mjs",
     "scripts/*.mjs",
     "scripts/duel/*.mjs",
+    "scripts/ghidra/*",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
