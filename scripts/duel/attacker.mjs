@@ -114,22 +114,42 @@ export async function attack(tools, path) {
   const behaviorHits = BEHAVIOURS.filter((label) => triageText.toLowerCase().includes(label.toLowerCase()));
   // Run the first machine-readable probe the report offers. A confirm step
   // that cannot be executed is a wish; this is where it gets tested.
-  const probeMatch = triageText.match(/probe:\s*([a-z_]+)\s*@\s*(0x[0-9a-f]+)/i);
+  const probeMatch = triageText.match(/probe:\s*([a-z_]+)\s*@\s*(0x[0-9a-f]+)(?:\s*\(([a-z]+)\))?/i);
   let probe = null;
   if (probeMatch) {
-    const [, toolName, address] = probeMatch;
-    const opened = await call(tools, 'mcp__rea__open_binary', { path });
-    const result = await call(tools, `mcp__rea__${toolName}`, { address });
-    const textProbe = result.text.slice(0, 4000);
-    const named = /"name"\s*:\s*\{\s*"state"\s*:\s*"available"\s*,\s*"value"\s*:\s*"([^"]+)"/.exec(textProbe);
-    probe = {
-      tool: toolName,
-      address,
-      opened: opened.ok,
-      ok: result.ok && /"state"\s*:\s*"available"/.test(textProbe),
-      name: named?.[1] ?? null,
-      excerpt: textProbe.slice(0, 300),
-    };
+    const [, toolName, address, kind] = probeMatch;
+    if (toolName === 'probe_address') {
+      // The local tier: no engine, so no symbol. It still answers the question
+      // the plan actually asked - is this address the kind of thing it claims.
+      const result = await call(tools, 'rea_probe_address', { path, address, kind: kind ?? 'code' });
+      const verdict = /verdict:\s*([a-z-]+)/.exec(result.text)?.[1] ?? null;
+      probe = {
+        tool: 'probe_address',
+        tier: 'local',
+        address,
+        kind: kind ?? 'code',
+        opened: true,
+        ok: result.ok && (verdict === 'code' || verdict === 'pointer'),
+        name: null,
+        verdict,
+        excerpt: result.text.slice(0, 400),
+      };
+    } else {
+      const opened = await call(tools, 'mcp__rea__open_binary', { path });
+      const result = await call(tools, `mcp__rea__${toolName}`, { address });
+      const textProbe = result.text.slice(0, 4000);
+      const named = /"name"\s*:\s*\{\s*"state"\s*:\s*"available"\s*,\s*"value"\s*:\s*"([^"]+)"/.exec(textProbe);
+      probe = {
+        tool: toolName,
+        tier: 'engine',
+        address,
+        kind: kind ?? null,
+        opened: opened.ok,
+        ok: result.ok && /"state"\s*:\s*"available"/.test(textProbe),
+        name: named?.[1] ?? null,
+        excerpt: textProbe.slice(0, 300),
+      };
+    }
   }
 
   const planAt = triageText.toLowerCase().indexOf('experiments (ranked');

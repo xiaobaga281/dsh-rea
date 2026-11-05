@@ -112,11 +112,19 @@ export function scoreRow(row, ceiling, { baselineNoise = 0 } = {}) {
     api: reachable.api.length === 0 ? null : ratio(got.api.length, reachable.api.length),
     behavior: reachable.behavior.length === 0 ? null : ratio(got.behavior.length, reachable.behavior.length),
     plan: row.unrecoverable ? (row.planOk ? 1 : 0) : null,
-    // The only dimension an engine decides. A plan that names an address no
-    // analyser recognises scores 0 even when the prose sounds right. A report
-    // that stopped claiming a dead engine emits no probe, and `verify` is null
-    // (unmeasurable) rather than 0 - an environmental failure is not a miss.
-    verify: row.probe ? (row.probe.ok && Boolean(row.probe.name) ? 1 : 0) : null,
+    // The only dimension decided outside the recipe: was the address the plan
+    // named actually the kind of thing the plan said it was.
+    //
+    // Two tiers. An engine run has to resolve a name, because that is what the
+    // engine adds over reading the file. A local structural probe cannot name
+    // anything, so it is scored on the verdict it does produce - and a plan
+    // that points at .rdata while claiming code still fails it.
+    verify: (() => {
+      if (!row.probe) return null;
+      if (!row.probe.ok) return 0;
+      if (row.probe.tier === 'local') return 1;
+      return row.probe.name ? 1 : 0;
+    })(),
     precision,
   };
   let weighted = 0;

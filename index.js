@@ -39,7 +39,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { classifyTool, createArtifactStore, pathOutsideScope, sessionArtifactRoot } from './lib/artifacts.js';
-import { buildExportReportTool, buildPurgeArtifactsTool, buildTriageTool } from './lib/analysis-tools.js';
+import { buildExportReportTool, buildProbeAddressTool, buildPurgeArtifactsTool, buildTriageTool } from './lib/analysis-tools.js';
 import { childEnvironment, resolveConfig } from './lib/config.js';
 import { createLimiter } from './lib/concurrency.js';
 import {
@@ -299,6 +299,10 @@ export async function apply(ctx, rawConfig = {}) {
     },
   };
   ctx.effect(() => register(buildTriageTool(triageOptions)), 'dsh-rea: triage tool');
+  // The fallback for `verify` when no analyzer can start: it reads the file
+  // the report describes, so an uninstalled engine no longer makes a correct
+  // plan unscorable.
+  ctx.effect(() => register(buildProbeAddressTool()), 'dsh-rea: address probe tool');
 
   ctx.effect(() => register(buildExportReportTool({ client: clientFacade, store: artifacts, toolVersion: PLUGIN_VERSION })), 'dsh-rea: export report tool');
 

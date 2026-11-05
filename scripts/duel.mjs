@@ -90,7 +90,7 @@ for (const row of scored) {
   console.log(`    api ${row.got.api.length}/${row.reachable.api.length}  `
     + `behaviour ${row.got.behavior.length}/${row.reachable.behavior.length}  `
     + `plan ${row.unrecoverable ? (row.planOk ? 'yes' : 'NO') : 'n/a'}`
-    + `  verify ${row.probe ? (row.probe.ok && row.probe.name ? row.probe.name : 'FAILED') : 'n/a'}`
+    + `  verify ${row.probe ? (row.probe.tier === 'local' ? `local:${row.probe.verdict ?? '?'}` : (row.probe.ok && row.probe.name ? row.probe.name : 'FAILED')) : 'n/a'}`
     + `  precision ${pct(row.precision)}`);
   const misses = Object.entries(row.missing).filter(([, list]) => list.length > 0)
     .map(([key, list]) => `${key}: ${list.slice(0, 3).join(' | ')}`);
@@ -109,7 +109,7 @@ for (const row of scored) {
     + `${pad(`${row.got.api.length}/${row.reachable?.api.length ?? ceiling.api.length}`, 7)}`
     + `${pad(`${row.got.behavior.length}/${row.reachable?.behavior.length ?? ceiling.behavior.length}`, 8)}`
     + `${pad(row.unrecoverable ? (row.planOk ? 'yes' : 'NO') : '-', 6)}`
-    + `${pad(row.probe ? (row.probe.ok && row.probe.name ? 'yes' : 'NO') : '-', 8)}`
+    + `${pad(row.probe ? (row.probe.tier === 'local' ? (row.probe.ok ? 'local' : 'NO') : (row.probe.ok && row.probe.name ? 'yes' : 'NO')) : '-', 8)}`
     + `${pad(pct(row.precision), 7)}`
     + `${pad(row.noise, 7)}${pct(row.overall)}`);
 }

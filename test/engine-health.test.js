@@ -31,6 +31,19 @@ test('the failing directory is named, because each one is a separate gate', () =
   assert.equal(config.code, 'jvm-scratch-denied');
 });
 
+test('the project directory is the gate no launch.properties can move', () => {
+  const stack = [
+    'java.io.IOException: Access is denied',
+    '\tat java.base/java.io.WinNTFileSystem.createFileExclusively0(Native Method)',
+    '\tat ghidra.framework.data.DefaultProjectData.init(DefaultProjectData.java:299)',
+    '\tat ghidra.app.util.headless.HeadlessAnalyzer.processLocal(HeadlessAnalyzer.java:439)',
+  ].join('\n');
+  const result = classifyEngineFailure(stack);
+  assert.equal(result.code, 'project-dir-denied');
+  assert.equal(result.directory, 'project');
+  assert.match(result.reason, /-projectPath/);
+});
+
 test('a log file the JVM cannot create is its own kind', () => {
   const log = classifyEngineFailure('main ERROR Unable to create file C:/Temp/rea-ghidra-x/ghidra.log');
   assert.equal(log.code, 'jvm-log-denied');
@@ -88,7 +101,11 @@ test('an unavailable engine drops the probe instead of promising it', () => {
   });
   const step = plan.find((entry) => entry.action.includes('TLS callback'));
   assert.ok(step, 'the experiment is still planned');
-  assert.equal(step.probe, undefined, 'a probe against a dead engine is a false claim');
+  // 1.8.5 dropped the probe entirely. 1.8.6 keeps the claim checkable by hand:
+  // the same address goes to the local structural probe, labelled as such.
+  assert.equal(step.probe.tool, 'probe_address');
+  assert.equal(step.probe.tier, 'local');
+  assert.equal(step.probe.blockedFrom, 'ghidra');
   assert.match(step.blocked, /私有运行目录|临时目录/);
   assert.equal(step.provider.ready, false);
 });
@@ -105,7 +122,10 @@ test('a ready engine keeps the probe', () => {
     providers: { providers: { ghidra: { ready: true, reason: null } } },
   });
   const step = plan.find((entry) => entry.action.includes('TLS callback'));
-  assert.deepEqual(step.probe, { tool: 'inspect_address_context', rva: 0x1800, expectName: 'tls_callback' });
+  assert.equal(step.probe.tool, 'inspect_address_context');
+  assert.equal(step.probe.rva, 0x1800);
+  assert.equal(step.probe.expectName, 'tls_callback');
+  assert.equal(step.probe.tier, 'engine');
   assert.equal(step.blocked, undefined);
 });
 

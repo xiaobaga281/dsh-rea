@@ -127,6 +127,67 @@ Java 探测会枚举 `JAVA_HOME`、各发行版的安装目录（`C:\Program Fil
 | `playbookMaxCalls` | `200` | 单个 playbook 允许发起的 REA 调用次数上限（1–2000）。 |
 | `batchTriageLimit` | `50` | `rea_batch_triage` 单次最多处理的文件数（1–500）。 |
 
+### 1.8.6 那个缺口堵上了，后面还有一道
+
+1.8.5 结尾说引擎还剩一个缺口：`ghidra.log` 写不进去。这一轮先把它堵上了——**然后撞上了第五道门**。
+
+#### 日志缺口：堵上了
+
+Ghidra 的日志 appender 写在 `generic.log4j.xml` 里，而 `log4j.configurationFile` 系统属性优先于它。换一份**不写文件**的配置（只留 stderr），日志路径是否可写就不再是启动前提。验证后错误确实消失了。
+
+#### 第五道门：项目目录
+
+下一行错误是：
+
+```
+java.io.IOException: 拒绝访问。
+  at java.io.File.createNewFile(File.java:1045)
+  at ghidra.framework.data.DefaultProjectData.init(DefaultProjectData.java:299)
+  at HeadlessAnalyzer.processLocal(HeadlessAnalyzer.java:439)
+```
+
+Ghidra 要在 `-projectPath` 里建 `.gpr` / `.rep`，而那个路径同样在 REA 的私有运行时里。**这一层没有系统属性可以覆盖**：参数是 REA 传的，路径是 REA 建的，DACL 是 REA 装的。到这儿为止，前四道门（temp / cache / config / log）都能用 `launch.properties` 挪开，第五道不能。
+
+所以换方向——不再试着把引擎撬起来，而是让 `verify` 不需要它。
+
+#### `verify` 的两档
+
+新增 `lib/probe.js` 与自有工具 `rea_probe_address`：读文件、查节表，回答两个问题。
+
+| 断言类型 | 问的问题 | 判据 |
+| --- | --- | --- |
+| `code` | 这个地址是可执行代码吗 | 落在 `IMAGE_SCN_MEM_EXECUTE` 的节里 |
+| `pointer` | 这个 dword 指向可执行代码吗 | 指针值落在可执行节 |
+
+规划器在引擎不可用时不再删掉探针，而是换执行者：
+
+```
+confirm with: inspect_address_context at RVA 0x9800 ... [ghidra: unavailable - ...]
+probe: probe_address @ 0x409800 (code) [local structural check]
+```
+
+报告里同时保留 `blocked` 原因，所以「谁在检查」和「为什么不是引擎」都写在明面上。
+
+#### 结果
+
+| 代际 | verify | 得分 |
+| --- | --- | --- |
+| D6 | **NO**（声称引擎、引擎当场死） | 89.0% |
+| D7 / D8 | `local`（结构自证） | 100% |
+| D9 | `local` | 92.8% |
+
+十代均值 **98.0%**，weakest D6，precision floor 42.1%，honesty failures 0。
+
+#### 这不是免费分
+
+本地探针会失败。测试里把 `.rdata` 里的派发表地址当成 `code` 去探，得到 `verdict: not-executable`，`verify` 记 0；把 `.rdata` 里的普通 dword 当成 `pointer`，得到 `not-a-code-pointer`。只有地址真的对得上断言类型才得分。
+
+引擎档仍然更严：`tier: engine` 的探针必须解析出符号名，返回 `available` 但没名字一律 0。
+
+#### 诊断：五个位置
+
+`classifyEngineFailure` 现在按位置分类：`tmp` / `cache` / `config` / `log` / `project`。前四个是「装错了」，第五个是「这台机器上跑不了」，措辞不同。
+
 ### 1.8.5 那句「盐不可达」是错的
 
 1.8.4 把 D8 记成「盐被密封，9 个 API 名没有任何静态方法能恢复」，并把它当作诚实的能力边界写进了文档。这一轮把它推翻了：**盐一直在文件里，只是工具读到了钥匙却没有用。**

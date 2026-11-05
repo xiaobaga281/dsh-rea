@@ -137,6 +137,53 @@ email G@I...mAC       email GGGFG@GG.HPd     domain gXZ.cN
 
 安装位置：`<repo>/.tools/`（`ghidra_12.1.4_PUBLIC` + `jdk-21.0.13+9`），C 盘只留 `rea-engines/config.json` 里的两个路径字符串。若宿主限制子进程只能写工作区，`TMP`/`TEMP`/`APPDATA` 必须一并指过去，否则 REA 的私有运行目录会让 JVM 在写 `java_home.save` 时被拒，Ghidra 会误报「找不到 JDK」。
 
+## 1.8.6：verify 不再依赖引擎
+
+1.8.5 收尾时列了一个「还剩」的缺口：Ghidra 的 `ghidra.log` 写不进 REA 的私有运行目录。这一轮把它堵上了，然后撞上第五道门。
+
+### 前四道门能挪，第五道不能
+
+| # | 需要的位置 | 能否绕过 |
+| --- | --- | --- |
+| 1 | `tmp/<user>-ghidra` | `-Dapplication.tempdir` |
+| 2 | `cache/<user>-ghidra` | `-Dapplication.cachedir` |
+| 3 | `config/<user>-ghidra/<release>` | `-Dapplication.settingsdir` |
+| 4 | `<root>/ghidra.log` / `script.log` | `-Dlog4j.configurationFile` 指向不写文件的配置 |
+| 5 | `<projectPath>/*.gpr`、`.rep` | **不能**：参数由 REA 传，路径在私有运行时里 |
+
+前四道逐个验证过，错误确实依次推进（temp → cache → config → log → project）。第五道停在 `DefaultProjectData.init` 的 `createNewFile`：Ghidra 必须在项目目录里建数据库，而这个目录的 DACL 只允许 REA 自己的原生进程写入。
+
+### 于是让 verify 不需要引擎
+
+新增 `lib/probe.js` 和自有工具 `rea_probe_address`。判据是文件本身：
+
+- `kind: code` → 该 RVA 必须落在可执行节（TLS 回调就是这一类）；
+- `kind: pointer` → 该 RVA 处的 dword 必须指向可执行节（派发表条目）。
+
+规划器在引擎不可用时把同一个地址改派给本地探针，并保留 `blocked` 原因：
+
+```
+probe: inspect_address_context @ 0x409800 (code)          ← 引擎可用
+probe: probe_address @ 0x409800 (code) [local structural check]   ← 引擎不可用
+```
+
+### 评分：两档，都要求真的对上
+
+| tier | 判据 | 说明 |
+| --- | --- | --- |
+| `engine` | `ok` 且解析出符号名 | 名字才是引擎相对「读文件」多出来的东西 |
+| `local` | `verdict: code` / `pointer` | 不能命名，只证明结构符合断言 |
+
+| 代际 | verify | score |
+| --- | --- | --- |
+| D6 | NO（engine，失败） | 89.0% |
+| D7 / D8 | local | 100% |
+| D9 | local | 92.8% |
+
+十代均值 97.9% → **98.0%**。分数几乎没动，但**维度从「不可测」变回「可测」**：D7/D8 的地址被真的读了一遍，而不是因为引擎缺失就跳过。
+
+本地档不是白送：把 `.rdata` 的派发表地址当 `code` 探，`verdict: not-executable`，记 0；把普通 dword 当 `pointer` 探，`not-a-code-pointer`，记 0。`test/probe.test.js` 固定了这两种失败。
+
 ## 1.8.5：把「不可达」拆成「没试到」
 
 1.8.4 的结论写得很干脆：D8 的盐被密封，9 个 API 名静态不可恢复，`api 1/9` 是真实能力缺口。这一轮推翻了它。
