@@ -127,6 +127,60 @@ Java 探测会枚举 `JAVA_HOME`、各发行版的安装目录（`C:\Program Fil
 | `playbookMaxCalls` | `200` | 单个 playbook 允许发起的 REA 调用次数上限（1–2000）。 |
 | `batchTriageLimit` | `50` | `rea_batch_triage` 单次最多处理的文件数（1–500）。 |
 
+### 1.8.9 一个 238 MB 的 APK
+
+上一轮是 Windows 安装包，这一轮是 Android：`app-complete-arm64-v8a-release.apk`，238,305,217 字节。第一份报告同样错得干脆：
+
+```
+verdict: possibly-obfuscated (confidence 0.45)
+anti-analysis markers: peb-flags, cpu-hypervisor, sandbox-tools
+next steps: Do not trust decompiler output yet: locate the OEP / unpack before static analysis.
+```
+
+一个 APK 没有 OEP。三件事同时错了：
+
+| 错在哪 | 为什么错 |
+| --- | --- |
+| 把 deflate 当加密 | APK 是 ZIP，条目本来就是压缩的，熵 8.0 是**预期的**，不是混淆 |
+| 把 PE 的反分析标记套上去 | `peb-flags` / `cpu-hypervisor` 是 Windows 特征，在 ZIP 里命中纯属字符串巧合 |
+| 只读了前 64 MB | ZIP 的索引在**文件末尾**，读头等于什么都没读 |
+
+#### 三处改动
+
+| 模块 | 做了什么 |
+| --- | --- |
+| `lib/android.js` | 用文件句柄 seek 到尾部找 EOCD，读中央目录：652 条记录、v2 签名块、dex 数量、ABI 分布、未压缩体积。不整文件读，不解压，不执行 |
+| `lib/axml.js` | 自己解析二进制 `AndroidManifest.xml`：字符串池（UTF-8/UTF-16）、start element、类型化属性。**不需要 apktool，也不需要 JVM** |
+| `lib/triage.js` | 档案类格式不再跑 PE 判据：反分析标记、XOR 探针、未解析高熵区全部跳过；新增 verdict `android-package` |
+
+顺带修掉两个真实的显示缺陷：`regionnull`（高熵区没有 RVA 时拼出了 `null`），以及档案报告里重复三遍的 `not parsed`。
+
+#### 现在的报告
+
+```
+verdict: android-package (confidence 0.9)
+android: ai.deepseek.harness.mobile 0.2.1-rc.209-complete (209) | minSdk 26 targetSdk 28
+         | 1 dex, 15 native libs [arm64-v8a:15] | 652 entries, 252.6 MB uncompressed | signature v2+
+permissions: 25 (INTERNET, ACCESS_NETWORK_STATE, REQUEST_INSTALL_PACKAGES, VIBRATE, RECORD_AUDIO, ...)
+exported components: activity ...MainActivity; service ...PhoneControlService; receiver ...ProfileInstallReceiver
+manifest flags: allowBackup, cleartextTraffic
+
+experiments:
+1. Decode classes*.dex with jadx and the manifest/resources with apktool - the manifest says this is
+   ai.deepseek.harness.mobile 0.2.1-rc.209-complete, then feed the 15 native libraries back into rea_triage
+   why: the dex is compressed bytecode and the manifest is binary XML, so neither appears in a string pass;
+        the 15 .so files are ELF and are the part this tool can already read
+   confirm with: offline: jadx -d <out> <apk> and apktool d -s <apk>; no engine state is needed
+```
+
+关于这个包本身，报告里能直接读出三件事：`targetSdk 28`（远低于 Play 当前要求）、`cleartextTraffic`（release 构建仍允许明文）、`REQUEST_INSTALL_PACKAGES` + `QUERY_ALL_PACKAGES` + 一个导出的 `PhoneControlService`。这些不是我猜的，是 manifest 的字节。
+
+#### 边界
+
+- **dex 没有反编译**。`AndroidManifest.xml` 我能自己解，Dalvik 字节码不能——那需要 jadx（或 baksmali），而 `jadx-headless-mcp` 是 MCP 服务端，不是 CLI，没法像 Ghidra 那样直接驱动。
+- **15 个 .so 没有分析**。它们是 arm64 ELF，`rea_triage` 能读，但需要先解压出来——本轮没有写解压器，也没有装 apktool。
+- `apktool 3.0.3` / `jadx 0.7.1` 仍是"可安装但未验证"的引擎，上一轮文档里的判断不变。
+
 ### 1.8.8 拿一个真实的 28 MB 安装包试了一遍
 
 前面十一代对抗全是自造样本。这一轮换真东西：`Xingchen-1.0.13-windows-amd64-compatible-setup.exe`，28,583,971 字节。第一个结论就是错的。
