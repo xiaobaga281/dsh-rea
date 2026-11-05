@@ -127,6 +127,49 @@ Java 探测会枚举 `JAVA_HOME`、各发行版的安装目录（`C:\Program Fil
 | `playbookMaxCalls` | `200` | 单个 playbook 允许发起的 REA 调用次数上限（1–2000）。 |
 | `batchTriageLimit` | `50` | `rea_batch_triage` 单次最多处理的文件数（1–500）。 |
 
+### 1.8.10 一条路由把整个插件按住了
+
+1.8.3 给 `/rea/fs/list` 同时注册了 GET 和 POST 两个 `exact` 路由，本意是「宿主只认 GET 时也不会 405」。宿主按**路径**去重：
+
+```
+webserver: duplicate exact route "/rea/fs/list"
+```
+
+插件在加载阶段就抛错，面板和工具全都不出现。1.8.3 之后的所有版本都带着这个洞，包括刚发的 v1.8.9——单测覆盖的是处理器，不是「注册表里能不能有两条同路径」。
+
+#### 改法
+
+一条路由，两个方法：
+
+```js
+{
+  path: '/rea/fs/list',
+  methods: ['GET', 'POST'],
+  async handler(request, response) {
+    const overGet = String(request?.method ?? 'GET').toUpperCase() === 'GET';
+    const target = overGet
+      ? new URL(String(request?.url ?? '/'), 'http://localhost').searchParams.get('path') ?? ''
+      : String((await readRequestJson(request))?.path ?? '');
+    ...
+  },
+}
+```
+
+三点连带调整：
+
+- 注册时**不传 `method`**。传了的话，只认单个方法的宿主会把另一半挡掉；方法校验移到 `guardRequest`，它现在接受数组。
+- `guardRequest` 对 `GET`/`HEAD` 直接放行，不再要求 `content-type: application/json`——那是给跨站 POST 用的，不适用于只读查询。
+- 日志里的方法标签改成 `GET|POST`，出错时不会打成 `undefined`。
+
+#### 回归测试
+
+`test/fs-browse.test.js` 新增两个用例，其中第一个用的假注册表**会在同路径第二次注册时抛错**，复刻宿主行为：
+
+- `the plugin registers each path once, which is what the host enforces`
+- `the single listing route answers GET and POST, and refuses the rest`（GET 走查询串、POST 走 JSON、PUT 得 405）
+
+顺带把整张路由表打出来核了一遍：8 条，无重复，`/rea/fs/list` 是唯一一条不声明单方法的。316 个测试通过。
+
 ### 1.8.9 一个 238 MB 的 APK
 
 上一轮是 Windows 安装包，这一轮是 Android：`app-complete-arm64-v8a-release.apk`，238,305,217 字节。第一份报告同样错得干脆：

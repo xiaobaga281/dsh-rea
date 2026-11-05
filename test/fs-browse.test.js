@@ -80,7 +80,12 @@ test('a very large directory is capped and says so', async () => {
 
 test('the listing endpoint answers with the same shape the picker expects', async () => {
   const routes = new Map();
-  mountEnvironmentRoutes({ webServer: { register(definition) { routes.set(`${definition.method} ${definition.path}`, definition.handler); return () => {}; } } }, {
+  mountEnvironmentRoutes({ webServer: { register(definition) {
+    const key = definition.method ? `${definition.method} ${definition.path}` : definition.path;
+    if (routes.has(key)) throw new Error(`webserver: duplicate exact route "${definition.path}"`);
+    routes.set(key, definition.handler);
+    return () => {};
+  } } }, {
     status: async () => ({ ok: true }),
     listDirectories: (path) => listDirectories(path),
   });
@@ -91,7 +96,7 @@ test('the listing endpoint answers with the same shape the picker expects', asyn
     writeHead(code) { state.status = code; this.writableEnded = true; },
     end(body) { state.body = String(body ?? ''); },
   };
-  await routes.get('POST /rea/fs/list')({
+  await routes.get('/rea/fs/list')({
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     async *[Symbol.asyncIterator]() { yield Buffer.from(JSON.stringify({ path: root }), 'utf8'); },
@@ -104,7 +109,12 @@ test('the listing endpoint answers with the same shape the picker expects', asyn
 
 test('the listing endpoint refuses a relative path with 400', async () => {
   const routes = new Map();
-  mountEnvironmentRoutes({ webServer: { register(definition) { routes.set(`${definition.method} ${definition.path}`, definition.handler); return () => {}; } } }, {
+  mountEnvironmentRoutes({ webServer: { register(definition) {
+    const key = definition.method ? `${definition.method} ${definition.path}` : definition.path;
+    if (routes.has(key)) throw new Error(`webserver: duplicate exact route "${definition.path}"`);
+    routes.set(key, definition.handler);
+    return () => {};
+  } } }, {
     status: async () => ({ ok: true }),
     listDirectories: (path) => listDirectories(path),
   });
@@ -114,11 +124,73 @@ test('the listing endpoint refuses a relative path with 400', async () => {
     writeHead(code) { state.status = code; this.writableEnded = true; },
     end(body) { state.body = String(body ?? ''); },
   };
-  await routes.get('POST /rea/fs/list')({
+  await routes.get('/rea/fs/list')({
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     async *[Symbol.asyncIterator]() { yield Buffer.from(JSON.stringify({ path: 'samples' }), 'utf8'); },
   }, response);
   assert.equal(state.status, 400);
   assert.match(JSON.parse(state.body).error, /not an absolute path/);
+});
+
+/** Registry that behaves like the host: one exact route per path, no twins. */
+function hostRegistry(routes) {
+  return {
+    register(definition) {
+      if (routes.has(definition.path)) {
+        throw new Error(`webserver: duplicate exact route "${definition.path}"`);
+      }
+      routes.set(definition.path, definition.handler);
+      return () => {};
+    },
+  };
+}
+
+test('the plugin registers each path once, which is what the host enforces', () => {
+  // The real failure this pins: two entries for /rea/fs/list (GET and POST)
+  // made the whole plugin fail to load with
+  //   webserver: duplicate exact route "/rea/fs/list"
+  const routes = new Map();
+  assert.doesNotThrow(() => mountEnvironmentRoutes({ webServer: hostRegistry(routes) }, {
+    status: async () => ({ ok: true }),
+    listDirectories: async () => ({ path: '/', parent: null, entries: [] }),
+  }));
+  assert.equal(routes.has('/rea/fs/list'), true);
+});
+
+test('the single listing route answers GET and POST, and refuses the rest', async () => {
+  const routes = new Map();
+  mountEnvironmentRoutes({ webServer: hostRegistry(routes) }, {
+    status: async () => ({ ok: true }),
+    listDirectories: async () => ({ path: '/tmp', parent: '/', entries: [] }),
+  });
+  const handler = routes.get('/rea/fs/list');
+  const makeResponse = () => {
+    const state = { status: 0, body: '' };
+    return {
+      state,
+      writableEnded: false,
+      writeHead(code) { state.status = code; this.writableEnded = true; },
+      end(body) { state.body = String(body ?? ''); },
+    };
+  };
+
+  const get = makeResponse();
+  await handler({ method: 'GET', url: '/rea/fs/list?path=%2Ftmp', headers: {} }, get);
+  assert.equal(get.state.status, 200);
+  assert.equal(JSON.parse(get.state.body).ok, true);
+
+  const post = makeResponse();
+  await handler({
+    method: 'POST',
+    url: '/rea/fs/list',
+    headers: { 'content-type': 'application/json' },
+    async *[Symbol.asyncIterator]() { yield Buffer.from(JSON.stringify({ path: '/tmp' }), 'utf8'); },
+  }, post);
+  assert.equal(post.state.status, 200);
+
+  const put = makeResponse();
+  await handler({ method: 'PUT', url: '/rea/fs/list', headers: {} }, put);
+  assert.equal(put.state.status, 405);
+  assert.equal(JSON.parse(put.state.body).error, 'method-not-allowed');
 });

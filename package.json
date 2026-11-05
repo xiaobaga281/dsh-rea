@@ -1,6 +1,6 @@
 {
   "name": "dsh-rea",
-  "version": "1.8.9",
+  "version": "1.8.10",
   "displayName": "逆向分析",
   "description": "Reverse-engineering tools for DeepSeek Harness: a deferred full-schema catalog, hardened path/trust boundaries, structured result index, trusted playbooks, local static triage with a measured decode ladder (repeating-key XOR, RC4, stack strings, API hashes), compressed-container and delta/interleave recovery, per-build watermark detection, an explicit honesty report for unopenable regions, evidence exports, environment sidebar, and redundant-mirror self-update.",
   "type": "module",
