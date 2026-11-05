@@ -324,6 +324,21 @@ function decoyBlobs(count, size, seed = 0x1234abcd) {
 let tracked = new Set();
 const track = (values) => { for (const value of values) tracked.add(value); return values; };
 
+/**
+ * Values the defender puts inside a container it also calls unopenable.
+ *
+ * The scorer subtracts these from the ceiling: a literal sealed behind a
+ * runtime-derived key is not a recall miss, it is the fixture admitting it hid
+ * the value. Without this, D5-D8 lost 4-8% for something no analyser could
+ * recover, and `honesty` - the dimension that exists for exactly this case -
+ * charged for it a second time.
+ */
+let sealedValues = new Set();
+const seal = (values) => {
+  for (const value of values) sealedValues.add(value.startsWith('canary=') ? value.slice(7) : value);
+  return track(values);
+};
+
 const GENERATIONS = {
   D0: () => ({
     note: 'control: every literal is plaintext',
@@ -425,7 +440,7 @@ const GENERATIONS = {
     // static method can open the blob; the analyser must say so instead of
     // silently reporting nothing.
     const sealed = rc4(Buffer.from('runtime-derived-key-placeholder', 'latin1'),
-      records(track([ENDPOINTS[1], ANTI[8], IOC_TEXT[2], `canary=${CANARY[0]}`])));
+      records(seal([ENDPOINTS[1], ANTI[8], IOC_TEXT[2], `canary=${CANARY[0]}`])));
     const inner = xorRepeat(records(track([...ENDPOINTS.slice(0, 1), ...MARKERS, ...ANTI.slice(0, 8)])), NESTED_KEY);
     track([ENDPOINTS[3], ENDPOINTS[4]]);
     const custom = Buffer.concat([
@@ -469,7 +484,7 @@ const GENERATIONS = {
     // decoding anything. Here the analyst has to open the container first,
     // which is the order an independent analyst actually works in.
     const sealed = rc4(Buffer.from('runtime-derived-key-placeholder', 'latin1'),
-      records(track([ENDPOINTS[1], ANTI[8], IOC_TEXT[2], `canary=${CANARY[0]}`])));
+      records(seal([ENDPOINTS[1], ANTI[8], IOC_TEXT[2], `canary=${CANARY[0]}`])));
     const inner = xorRepeat(records([
       ...track([ENDPOINTS[0], ...MARKERS, ...ANTI.slice(0, 8)]),
       'cfg=rc4;key=derive(GetVolumeInformationA.serial);',
@@ -509,7 +524,7 @@ const GENERATIONS = {
     // This is the honesty generation. A tool that invents names here is worse
     // than one that reports "7 hash entries, algorithm unknown".
     const sealed = rc4(Buffer.from('runtime-derived-key-placeholder', 'latin1'),
-      records(track([ENDPOINTS[1], ANTI[8], IOC_TEXT[2], `canary=${CANARY[0]}`])));
+      records(seal([ENDPOINTS[1], ANTI[8], IOC_TEXT[2], `canary=${CANARY[0]}`])));
     const inner = xorRepeat(records([
       ...track([ENDPOINTS[0], ...MARKERS, ...ANTI.slice(0, 8)]),
       'cfg=rc4;key=derive(GetVolumeInformationA.serial);',
@@ -544,7 +559,7 @@ const GENERATIONS = {
     // sealed config. Every algorithm family fails, and the correct answer is
     // "10 hash entries, algorithm unknown, salt probably sealed" - not a guess.
     const sealed = rc4(Buffer.from('runtime-derived-key-placeholder', 'latin1'),
-      records(track([ENDPOINTS[1], ANTI[8], IOC_TEXT[2], `canary=${CANARY[0]}`])));
+      records(seal([ENDPOINTS[1], ANTI[8], IOC_TEXT[2], `canary=${CANARY[0]}`])));
     const inner = xorRepeat(records([
       ...track([ENDPOINTS[0], ...MARKERS, ...ANTI.slice(0, 8)]),
       `cfg=rc4;key=derive(GetVolumeInformationA.serial);salt=0x${SALTED_SEED.toString(16)};`,
@@ -579,6 +594,13 @@ export const GENERATION_IDS = Object.keys(GENERATIONS);
 function assertCoverage(id) {
   const missing = ALL_STRINGS.filter((value) => !tracked.has(value));
   if (missing.length > 0) throw new Error(`${id} does not carry: ${missing.join(', ')}`);
+  // Sealing is a claim the scorer relies on, so it has to be checked like one:
+  // a value cannot be declared unreachable unless it was actually encoded.
+  for (const value of sealedValues) {
+    if (![...tracked].some((entry) => entry === value || entry === `canary=${value}`)) {
+      throw new Error(`${id} declares "${value}" sealed but never encoded it`);
+    }
+  }
   if (![...tracked].some((value) => value.startsWith('canary='))) {
     throw new Error(`${id} carries no attribution watermark`);
   }
@@ -590,6 +612,7 @@ function assertCoverage(id) {
  */
 export function buildGeneration(id) {
   tracked = new Set();
+  sealedValues = new Set();
   const spec = GENERATIONS[id]();
   assertCoverage(id);
   const pe = spec.pe ?? {};
@@ -602,5 +625,5 @@ export function buildGeneration(id) {
     info: built.info,
     overlap: Boolean(pe.overlap),
   });
-  return { id, buffer, note: spec.note, decoys: spec.decoys ?? 0, unrecoverable: Boolean(spec.unrecoverable) };
+  return { id, buffer, note: spec.note, decoys: spec.decoys ?? 0, unrecoverable: Boolean(spec.unrecoverable), sealed: [...sealedValues] };
 }

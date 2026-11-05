@@ -39,6 +39,7 @@ for (const id of generations) {
     bytes: built.buffer.length,
     decoys: built.decoys,
     unrecoverable: built.unrecoverable,
+    sealed: built.sealed ?? [],
     ...result,
   });
 }
@@ -69,21 +70,37 @@ const WEIGHTS = {
 
 const ratio = (hit, total) => (total === 0 ? 1 : Number((hit / total).toFixed(3)));
 const scoreRow = (row) => {
+  // Read the ceiling the way this generation can actually be scored. A literal
+  // the defender sealed behind a runtime-derived key is not something an
+  // analyst missed; charging it to recall while also charging `honesty` for the
+  // same region counted one impossible value twice.
+  const sealed = new Set(row.sealed ?? []);
+  const reachable = {
+    endpoints: ceiling.endpoints.filter((value) => !sealed.has(value)),
+    iocText: ceiling.iocText.filter((value) => !sealed.has(value)),
+    tracking: ceiling.tracking.filter((value) => !sealed.has(value)),
+    anti: ceiling.anti.filter((value) => !sealed.has(value)),
+    watermarks: ceiling.watermarks.filter((value) => !sealed.has(value)),
+    api: ceiling.api.filter((value) => !sealed.has(value)),
+    behavior: ceiling.behavior.filter((value) => !sealed.has(value)),
+  };
   const got = {
-    endpoints: row.endpoints.filter((value) => ceiling.endpoints.includes(value)),
-    iocText: row.iocText.filter((value) => ceiling.iocText.includes(value)),
-    tracking: row.trackingIds.filter((value) => ceiling.tracking.includes(value)),
-    anti: row.antiTechniques.filter((value) => ceiling.anti.includes(value)),
-    watermarks: row.watermarks.filter((value) => ceiling.watermarks.includes(value)),
-    api: row.apiHits.filter((value) => ceiling.api.includes(value)),
-    behavior: row.behaviorHits.filter((value) => ceiling.behavior.includes(value)),
+    endpoints: row.endpoints.filter((value) => reachable.endpoints.includes(value)),
+    iocText: row.iocText.filter((value) => reachable.iocText.includes(value)),
+    tracking: row.trackingIds.filter((value) => reachable.tracking.includes(value)),
+    anti: row.antiTechniques.filter((value) => reachable.anti.includes(value)),
+    watermarks: row.watermarks.filter((value) => reachable.watermarks.includes(value)),
+    api: row.apiHits.filter((value) => reachable.api.includes(value)),
+    behavior: row.behaviorHits.filter((value) => reachable.behavior.includes(value)),
   };
   const recall = {
-    endpoints: ratio(got.endpoints.length, ceiling.endpoints.length),
-    iocText: ratio(got.iocText.length, ceiling.iocText.length),
-    tracking: ratio(got.tracking.length, ceiling.tracking.length),
-    anti: ratio(got.anti.length, ceiling.anti.length),
-    watermarks: ratio(got.watermarks.length, ceiling.watermarks.length),
+    endpoints: ratio(got.endpoints.length, reachable.endpoints.length),
+    iocText: ratio(got.iocText.length, reachable.iocText.length),
+    tracking: ratio(got.tracking.length, reachable.tracking.length),
+    anti: ratio(got.anti.length, reachable.anti.length),
+    // A generation that seals the only watermark has no measurable attribution
+    // dimension; `null` redistributes its weight instead of scoring a free zero.
+    watermarks: reachable.watermarks.length === 0 ? null : ratio(got.watermarks.length, reachable.watermarks.length),
     // A dimension with nothing in the control is not "fully covered" - it is
     // unmeasurable, and counting it as 1.0 would quietly inflate every row.
     api: ceiling.api.length === 0 ? null : ratio(got.api.length, ceiling.api.length),
@@ -107,13 +124,13 @@ const scoreRow = (row) => {
   }
   const overall = Number((weighted / total).toFixed(4));
   const missing = {
-    endpoints: ceiling.endpoints.filter((value) => !got.endpoints.includes(value)),
-    iocText: ceiling.iocText.filter((value) => !got.iocText.includes(value)),
-    tracking: ceiling.tracking.filter((value) => !got.tracking.includes(value)),
-    anti: ceiling.anti.filter((value) => !got.anti.includes(value)),
-    watermarks: ceiling.watermarks.filter((value) => !got.watermarks.includes(value)),
-    api: ceiling.api.filter((value) => !got.api.includes(value)),
-    behavior: ceiling.behavior.filter((value) => !got.behavior.includes(value)),
+    endpoints: reachable.endpoints.filter((value) => !got.endpoints.includes(value)),
+    iocText: reachable.iocText.filter((value) => !got.iocText.includes(value)),
+    tracking: reachable.tracking.filter((value) => !got.tracking.includes(value)),
+    anti: reachable.anti.filter((value) => !got.anti.includes(value)),
+    watermarks: reachable.watermarks.filter((value) => !got.watermarks.includes(value)),
+    api: reachable.api.filter((value) => !got.api.includes(value)),
+    behavior: reachable.behavior.filter((value) => !got.behavior.includes(value)),
   };
   // A target that cannot be opened statically must be reported as such; silence
   // is a worse answer than "this region needs a dynamic trace".
@@ -121,6 +138,7 @@ const scoreRow = (row) => {
   return {
     ...row, got, recall, overall,
     missing,
+    reachable,
     honesty,
     noise: row.noise.length,
   };
@@ -174,7 +192,7 @@ for (const row of scored) {
     + `tracking ${row.got.tracking.length}/${ceiling.tracking.length}  `
     + `anti ${row.got.anti.length}/${ceiling.anti.length}  `
     + `watermark ${row.got.watermarks.length}/${ceiling.watermarks.length}  `
-    + `| noise ${row.noise}`);
+    + `| noise ${row.noise}${row.sealed?.length ? `  sealed ${row.sealed.length}` : ''}`);
   console.log(`    api ${row.got.api.length}/${ceiling.api.length}  `
     + `behaviour ${row.got.behavior.length}/${ceiling.behavior.length}  `
     + `plan ${row.unrecoverable ? (row.planOk ? 'yes' : 'NO') : 'n/a'}`

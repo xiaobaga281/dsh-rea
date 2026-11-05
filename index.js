@@ -46,8 +46,12 @@ import {
   ENGINE_ENV_OVERRIDES, applyGhidraEnvironment, detectGhidra, engineConfigSignature,
   environmentStatus, installExternalTool, installGhidra, providerReadiness, saveEnginePaths,
 } from './lib/engines.js';
+import { listDirectories } from './lib/fs-browse.js';
 import { ReaMcpClient } from './lib/mcp-client.js';
 import { DSH_HOME, PLUGIN_ROOT, WORKSPACE_DIR } from './lib/paths.js';
+import {
+  applyPolicyPatch, describePolicy, normalizePolicyPatch, readPolicyOverrides, writePolicyOverrides,
+} from './lib/policy-store.js';
 import { buildPlaybookTool, buildProtocolTool, buildWindowsToolsTool, buildWorkflowTools } from './lib/workflow-tools.js';
 import { buildIntelTools } from './lib/intel-tools.js';
 import { createToolRegistry } from './lib/registry.js';
@@ -101,7 +105,14 @@ function translator(ctx) {
  * while the tools stay listed; disposal closes the transport.
  */
 export async function apply(ctx, rawConfig = {}) {
-  const config = resolveConfig(rawConfig);
+  // The sidebar owns five security settings in its own file. Reading it before
+  // `resolveConfig` means the panel and the guard agree from the first call,
+  // instead of the panel showing a value the guard never saw.
+  const policyFile = await readPolicyOverrides();
+  const config = resolveConfig(rawConfig, policyFile.values);
+  config.policySource = policyFile.error ? 'row' : (Object.keys(policyFile.values).length > 0 ? 'panel' : 'row');
+  config.policyError = policyFile.error;
+  let policyUpdatedAt = policyFile.updatedAt ?? null;
   const log = {
     info: (message) => { try { ctx.logger?.info?.(message); } catch {} },
     warn: (message) => { try { ctx.logger?.warn?.(message); } catch {} },
@@ -154,16 +165,23 @@ export async function apply(ctx, rawConfig = {}) {
     version: PLUGIN_VERSION,
     update: updateStatus(PLUGIN_VERSION),
     policy: {
+      // Counts keep the old shape working; `values` is what the sidebar edits.
       allowedTargets: config.allowedTargets.length,
+      targets: [...config.allowedTargets],
       allowDeviceMutations: config.allowDeviceMutations,
       sensitiveArtifacts: config.sensitiveArtifacts,
       artifactRetentionDays: config.artifactRetentionDays,
+      networkEgressPolicy: config.networkEgressPolicy,
       pinnedSha256: config.pinnedSha256,
       catalogProbe: config.catalogProbe,
       imageCapture: config.imageCapture,
       playbookDir: config.playbookDir,
-      networkEgressPolicy: config.networkEgressPolicy,
       externalToolCount,
+      editable: true,
+      source: config.policySource,
+      updatedAt: policyUpdatedAt,
+      error: config.policyError ?? null,
+      values: describePolicy(config),
     },
   });
 
@@ -469,6 +487,35 @@ export async function apply(ctx, rawConfig = {}) {
         return { changed: result.changed || engineConfigSignature() !== before };
       },
       restart,
+      // Directory names only. The panel needs them to offer a picker; nothing
+      // in this handler can read a file.
+      listDirectories: (path) => listDirectories(path),
+      /**
+       * The sidebar's security switches.
+       *
+       * Applied in place, never by rebuilding the config: `guardTool` closes
+       * over this object and reads it on every call, so a replaced object would
+       * leave the guard enforcing yesterday's policy until the next session.
+       * Nothing restarts - a scope or egress change is checked per call.
+       */
+      applyPolicy: async (body) => {
+        const { reset, patch } = normalizePolicyPatch(body);
+        applyPolicyPatch(config, patch);
+        artifacts.configure({
+          retentionDays: config.artifactRetentionDays,
+          sensitive: config.sensitiveArtifacts,
+        });
+        const saved = await writePolicyOverrides(reset ? { ...patch } : patch);
+        policyUpdatedAt = saved.updatedAt;
+        config.policySource = 'panel';
+        config.policyError = null;
+        void artifacts.audit({
+          tool: 'rea_policy',
+          args: Object.keys(patch),
+          policy: reset ? 'reset' : 'update',
+        });
+        return { changed: true };
+      },
       log,
     });
     ctx.effect(() => routeDispose, 'dsh-rea: environment routes');
