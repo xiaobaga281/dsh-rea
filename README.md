@@ -127,6 +127,77 @@ Java 探测会枚举 `JAVA_HOME`、各发行版的安装目录（`C:\Program Fil
 | `playbookMaxCalls` | `200` | 单个 playbook 允许发起的 REA 调用次数上限（1–2000）。 |
 | `batchTriageLimit` | `50` | `rea_batch_triage` 单次最多处理的文件数（1–500）。 |
 
+### 1.8.8 拿一个真实的 28 MB 安装包试了一遍
+
+前面十一代对抗全是自造样本。这一轮换真东西：`Xingchen-1.0.13-windows-amd64-compatible-setup.exe`，28,583,971 字节。第一个结论就是错的。
+
+#### 它说「可能加壳，去找 OEP」
+
+```
+verdict: likely-packed-or-protected (confidence 0.65)
+entropy: overall 7.996 | high-block ratio 0.971
+packers: none matched
+```
+
+真实情况：**Inno Setup 6.7.0 安装包**。`.text` 是 Delphi 写的普通 stub，最后 27,533,347 字节是 `zlb` 压缩载荷，落在最后一个节之后，加载器根本不会映射它。
+
+熵 7.996 量的是那 27 MB 压缩数据，不是代码；「97% 的块是高熵」同理。于是报告把「这个文件大部分是压缩字节」读成了「代码被加密了」，再给出「别信反编译，先找 OEP」——一条不存在路。
+
+#### 五个缺陷
+
+| 缺陷 | 现象 | 改法 |
+| --- | --- | --- |
+| **容器没被识别** | 没有任何 packer 签名命中，却判定"可能加壳" | 新增 `lib/installer.js`：按签名识别 Inno / NSIS / InstallShield / 7z / RAR / ZIP / PyInstaller / Electron，并读出版本号 |
+| **熵算错了对象** | 全文件熵把载荷算进代码 | 增加 `mapped image` 熵（最后一个节为止），判定改用镜像熵 |
+| **28 MB 里 5 个巧合** | 随机 dword 撞上字典哈希，被报成「5 个从哈希解析出的导入」 | 哈希命中必须成簇：≥3 条且相邻 ≤64 字节；D6–D10 的表是连续 dword 数组，一条不少 |
+| **「120 sampled」其实是前 120 条** | 采样停在大文件开头，也就是 DOS 头与 `.text` 起始 | 32 个窗口均匀覆盖全文 |
+| **伪代码里混日志前缀** | `12:33:24 INFO  ProbeAddress.java>` 出现在 C 代码第一行 | 逐行剥离 Ghidra 的 log4j 装饰（整行删除会删掉代码，前缀只出现在每段第一行） |
+
+#### 现在的报告
+
+```
+verdict: installer-with-payload (confidence 0.9)
+entropy: overall 7.996 ... | mapped image 7.003 over 1050624 bytes
+container: Inno Setup installer 6.7.0 - 27533347 bytes of Inno Setup "zlb" compressed blocks after file offset 0x100800
+toolchain: Delphi / C++ Builder (sections .itext + .didata/.edata)
+strings: 120 sampled across 32 windows (ascii)
+imports: 5 DLLs / 150 APIs (150 named)
+
+experiments:
+1. Extract the 27533347 bytes of Inno Setup "zlb" compressed blocks ... (Inno Setup installer 6.7.0),
+   then run rea_triage on each PE in the result
+   why: the payload is compressed archive data the loader never maps, so no function-level
+        work on this Delphi / C++ Builder stub can describe the application
+   confirm with: offline: 7z x or innoextract - nothing in this tool surface executes the payload
+```
+
+`container` 与 `toolchain` 是两个新字段；`nextSteps` 对这类样本的第一句改成「这是容器，不是被保护的二进制」。
+
+#### 反编译本身是通的
+
+用 1.8.7 的第一方引擎，直接反编译入口 RVA `0xb1e60`：
+
+```
+decompile_address rva 0xb1e60
+engine: ghidra-local, cached (11.4s)
+function: entry @ 004b1e60
+verdict: decompiled
+
+void entry(void)
+{
+  LPCWSTR lpLibFileName;
+  ...
+  uStack_28 = *in_FS_OFFSET;
+  *in_FS_OFFSET = &uStack_28;
+```
+
+首次分析 28 MB 用了 125 秒，项目缓存后 11.4 秒。Delphi 的 SEH 初始化、`LoadLibrary` 调用都在，说明引擎对真实编译器产物没有水土不服。
+
+#### 没做到的
+
+- **载荷没有解开**：机器上没有 `innoextract`，也没有 `7z`。Inno 6 的 `zlb` 块头不是裸 zlib（`zlb\x1a` 之后既不是 `78 9c` 也不是 raw deflate），硬解会得到一个自造的、半对的提取器——比不做更糟。报告现在直接说「先解包」，并把这一步排在实验第一位。
+- 因此**里面那个应用没有被分析**。安装器 stub 的导入表、反调试标记说的都是 Inno 的运行时，不是星尘客户端本身。
+
 ### 1.8.7 引擎跑不起来，那就自己开一个
 
 1.8.6 结尾写着第五道门堵不上：Ghidra 必须在 `-projectPath` 里建 `.gpr` / `.rep`，而那个路径在 REA 的私有运行时里，参数由 REA 传、目录由 REA 建、DACL 由 REA 装。**结论是对的，方向是错的。** 当时只想把 REA 的那条路修通，没问一句：为什么一定要走 REA？
