@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Headless logging profile for dsh-rea.
+
+  Ghidra's stock profile includes sibling XML files by relative href, resolved
+  against a jar: URL. When the install path contains non-ASCII characters that
+  URL is percent-encoded and the include fails, which aborts startup with
+  "Opaque part contains invalid character". This profile has no includes and
+  writes to stderr only, so it works from any install path and needs no
+  writable log file.
+-->
+<Configuration status="WARN">
+  <Appenders>
+    <Console name="console" target="SYSTEM_ERR">
+      <PatternLayout pattern="%d{HH:mm:ss} %-5p %m%n"/>
+    </Console>
+  </Appenders>
+  <Loggers>
+    <Logger name="ghidra" level="INFO"/>
+    <Root level="WARN">
+      <AppenderRef ref="console"/>
+    </Root>
+  </Loggers>
+</Configuration>

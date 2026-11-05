@@ -119,18 +119,24 @@ export async function attack(tools, path) {
   if (probeMatch) {
     const [, toolName, address, kind] = probeMatch;
     if (toolName === 'probe_address') {
-      // The local tier: no engine, so no symbol. It still answers the question
-      // the plan actually asked - is this address the kind of thing it claims.
+      // One tool, two tiers: it runs Ghidra itself when the install is usable
+      // and falls back to the section table otherwise. The report line says
+      // which happened, so the score does not have to assume.
       const result = await call(tools, 'rea_probe_address', { path, address, kind: kind ?? 'code' });
       const verdict = /verdict:\s*([a-z-]+)/.exec(result.text)?.[1] ?? null;
+      const engineLine = /^engine:\s*(.+)$/m.exec(result.text)?.[1]?.trim() ?? 'none';
+      const engine = engineLine.startsWith('ghidra-local') ? 'ghidra-local' : 'none';
+      const named = /^name:\s*(.+)$/m.exec(result.text)?.[1]?.trim() ?? null;
       probe = {
         tool: 'probe_address',
-        tier: 'local',
+        tier: engine === 'none' ? 'local' : 'engine',
+        engine,
+        engineNote: engineLine.slice(0, 160),
         address,
         kind: kind ?? 'code',
         opened: true,
         ok: result.ok && (verdict === 'code' || verdict === 'pointer'),
-        name: null,
+        name: named,
         verdict,
         excerpt: result.text.slice(0, 400),
       };

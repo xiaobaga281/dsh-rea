@@ -98,9 +98,19 @@ export function scoreRow(row, ceiling, { baselineNoise = 0 } = {}) {
     api: row.apiHits.filter((value) => reachable.api.includes(value)),
     behavior: row.behaviorHits.filter((value) => reachable.behavior.includes(value)),
   };
+  const noiseValues = Array.isArray(row.noise) ? row.noise : [];
   const noiseCount = Array.isArray(row.noise) ? row.noise.length : Number(row.noise ?? 0);
-  const extraNoise = Math.max(0, noiseCount - baselineNoise - NOISE_TOLERANCE);
-  const precision = precisionOf(noiseCount, baselineNoise);
+  // A value the fixture planted is not something the tool invented. Counting
+  // both in one number charged a correct read to the wrong account: D9's 22
+  // fragments are 8 benign + 12 planted + 2 derived from the planted URLs, and
+  // the tool fabricated nothing at all. Precision now measures fabrication;
+  // exposure to bait is reported next to it, not folded in.
+  const bait = new Set((row.bait ?? []).map((value) => String(value).toLowerCase()));
+  const bare = (value) => String(value).toLowerCase();
+  const ambiguous = noiseValues.filter((value) => bait.has(bare(value)));
+  const fabricated = noiseValues.filter((value) => !bait.has(bare(value)));
+  const extraNoise = Math.max(0, fabricated.length - baselineNoise - NOISE_TOLERANCE);
+  const precision = precisionOf(fabricated.length, baselineNoise);
   const recall = {
     endpoints: ratio(got.endpoints.length, reachable.endpoints.length),
     iocText: ratio(got.iocText.length, reachable.iocText.length),
@@ -145,6 +155,8 @@ export function scoreRow(row, ceiling, { baselineNoise = 0 } = {}) {
     precision, extraNoise,
     honesty,
     noise: noiseCount,
+    fabricated: fabricated.length,
+    ambiguous: ambiguous.length,
   };
 }
 

@@ -127,6 +127,112 @@ Java 探测会枚举 `JAVA_HOME`、各发行版的安装目录（`C:\Program Fil
 | `playbookMaxCalls` | `200` | 单个 playbook 允许发起的 REA 调用次数上限（1–2000）。 |
 | `batchTriageLimit` | `50` | `rea_batch_triage` 单次最多处理的文件数（1–500）。 |
 
+### 1.8.7 引擎跑不起来，那就自己开一个
+
+1.8.6 结尾写着第五道门堵不上：Ghidra 必须在 `-projectPath` 里建 `.gpr` / `.rep`，而那个路径在 REA 的私有运行时里，参数由 REA 传、目录由 REA 建、DACL 由 REA 装。**结论是对的，方向是错的。** 当时只想把 REA 的那条路修通，没问一句：为什么一定要走 REA？
+
+#### 同一个 Ghidra，换个启动者
+
+`.tools/ghidra_12.1.4_PUBLIC/support/analyzeHeadless.bat` 一直都在。绕开 REA 直接调它，项目目录放在插件自己可写的位置，五个门一个都不存在：
+
+| 门 | REA 的路径 | 本插件自己启动 |
+| --- | --- | --- |
+| tmp / cache / config | 私有运行时内，JVM 不可写 | `_JAVA_OPTIONS` 指到自己的目录 |
+| ghidra.log | REA 用 `-log` 固定 | 换成不带 include 的 log4j 配置，只写 stderr |
+| 项目目录 | `-projectPath` 由 REA 指定 | 自己指定 |
+
+拦路的不是权限，是三件小事，每一件都值得记下来：
+
+- **Ghidra 拒绝任何以点开头的路径元素**（`Path element starting with '.' is not permitted`），所以 `~/.dsh/...` 一律不能用——这是它自己的规则，不是 REA 的；
+- **安装路径含非 ASCII 时 log4j 起不来**：`generic.log4j.xml` 用相对 href include 兄弟文件，`jar:file:` URL 被百分号编码后 include 失败，启动即中止；
+- **`-process` 后面不能跟项目名**：它接的是可选的*程序*名，传项目名会让 Ghidra 去找一个不存在的程序然后中止。
+
+坏消息是第一次分析 360 KB 的 `notepad.exe` 要 219 秒；好消息是项目按文件版本缓存，之后每次 10–12 秒。
+
+#### 两个新工具
+
+`rea_probe_address` 现在有两档：引擎可用时真的读文件并命名，否则退回节表判断；输出里的 `engine:` 行说明是哪一档。
+
+```
+probe_address 0x409800 (kind=code)
+rva: 0x9800 | section: .text | executable: yes
+engine: ghidra-local, cached (11.2s)
+name: tls_callback_0
+verdict: code - 0x9800 is executable code in .text; named tls_callback_0
+```
+
+`rea_decompile_address` 是新的，也是这个项目第一次不靠别人的进程产出伪代码：
+
+```
+decompile_address rva 0x9800
+engine: ghidra-local, cached (12.2s)
+function: tls_callback_0 @ 00409800
+verdict: decompiled
+
+void __fastcall tls_callback_0(int param_1) { ... }
+```
+
+TLS 回调在 Ghidra 里通常只有符号没有函数体（`batch_decompile` 会报 "no procedure exists"），所以工具在需要时先反汇编、建函数，再反编译——这正是分析员手动做的那一步。
+
+#### 规划层：优先用自己的引擎
+
+`providers` 里多了一个 `ghidra-local`。规划器**优先**选它，不是当兜底：
+
+> 被包裹的 provider 的「就绪」是对一个插件看不见的沙箱的猜测，第一次调用才是验证。1.8.6 的 D6 就死在这次验证上——它按「REA 的 Ghidra 就绪」发了探针，探针当场失败。自己启动的引擎要么跑通，要么当场说明原因。
+
+效果：D6 从 89.0% 回到 100%，D7/D8/D9 的 `verify` 全部是引擎档并解析出 `tls_callback_0`。
+
+#### 第十一代：导入表齐全，但是假的
+
+十代全 100% 意味着这套阶梯不再有区分度。D10 换了个方向：**把导入表填满，让它看起来什么都有**。
+
+26 个真实的 kernel32 / user32 / advapi32 导出，样本一个都不调用，紧挨着 D6 的 ROR13 真表。工具里有这么一行：`if (named >= 24) return imports;` ——「有 24 个具名导入就不必再翻哈希表了」。D10 就从这里走过去：**api 1/9、behaviour 4/6、84.4%**。
+
+改法是承认那句话不成立：导入目录被填满是「名字被写过」的证据，不是「名字被写全了」的证据。现在无论目录多满都扫哈希表，两套来源分开计数并标注 `overlappingSources`：
+
+```
+imports: 3 DLLs / 35 APIs (26 named, 9 from hashes - the two sources name different functions)
+```
+
+规划里也多一步：`Decide which import source the loader walks`——两套都是真实导出，只有调用它们的代码能决定。
+
+#### 评分：编造与「读到诱饵」不是一回事
+
+D9 的 22 条噪声里，12 条是它自己种下的诱饵，2 条是从那些诱饵 URL 派生的 host，剩下 8 条就是控制代也有的良性片段（pdb、UA）。**工具一条都没编造**，它只是把文件里的东西读了出来。
+
+旧算法把这 22 条一起算进 precision，扣了 42.1%。现在防守方像 `seal()` 一样用 `bait:` 声明自己种了哪些值，评分分开记：
+
+| 指标 | D9 |
+| --- | --- |
+| noise | 22 |
+| ambiguous（防守方种的） | 12 |
+| fabricated（工具自己编的） | 10（8 条基线 + 2 条派生） |
+| precision | 100% |
+
+暴露在诱饵下仍然单列显示（`bait 12 (planted by the fixture)`），只是不再记到工具账上。
+
+#### 十一代结果
+
+| 代际 | api | behav | plan | verify | prec | score |
+| --- | --- | --- | --- | --- | --- | --- |
+| D0–D4 | 9/9 | 6/6 | – | – | 100% | 100% |
+| D5 | 9/9 | 6/6 | yes | – | 100% | 100% |
+| D6–D9 | 9/9 | 6/6 | yes | 引擎档 | 100% | 100% |
+| D10 | 9/9 | 6/6 | yes | 引擎档 | 100% | 100% |
+
+均值 **100%**，honesty failures 0。
+
+#### 这套阶梯到此为止
+
+十一代全满分，说明**这批代际已经测不出更多东西**了——继续加同类的变形只会继续满分。表里那个「weakest D1」是并列时的排序产物，不是信号。
+
+真正还值得测的是另外几条轴：真实加壳样本（UPX / Themida）、真实语言的编译器产物（Go / Rust 的运行时结构）、以及**动态**路径（Frida 那一路至今没有任何一代覆盖）。这些不是「再来一代 D11」能解决的，得先有对应的样本与判据。
+
+#### 遗留
+
+- Android 侧仍未覆盖：`jadx` / `apktool` 没有就绪的安装，也没有 APK 样本。
+- `ghidra`（被包裹的那个）在这台机器上依然跑不起来；现在它只是不重要了，不是修好了。
+
 ### 1.8.6 那个缺口堵上了，后面还有一道
 
 1.8.5 结尾说引擎还剩一个缺口：`ghidra.log` 写不进去。这一轮先把它堵上了——**然后撞上了第五道门**。

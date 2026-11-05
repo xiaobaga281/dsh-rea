@@ -80,10 +80,13 @@ test('the tool prints a verdict a script can act on', async () => {
   await writeFile(file, d6);
   try {
     const tool = buildProbeAddressTool();
-    const good = await tool.execute({ path: file, address: `0x${(IMAGE_BASE + TLS_RVA).toString(16)}`, kind: 'code' });
+    // engine:false keeps this test about the file-only answer. The engine tier
+    // has its own test, because a launch costs seconds and needs an install.
+    const good = await tool.execute({ path: file, address: `0x${(IMAGE_BASE + TLS_RVA).toString(16)}`, kind: 'code', engine: false });
     assert.match(good.text, /verdict: code/);
     assert.match(good.text, /section: \.text \| executable: yes/);
-    const bad = await tool.execute({ path: file, address: `0x${(IMAGE_BASE + TABLE_RVA).toString(16)}`, kind: 'code' });
+    assert.match(good.text, /engine: none \(disabled\)/);
+    const bad = await tool.execute({ path: file, address: `0x${(IMAGE_BASE + TABLE_RVA).toString(16)}`, kind: 'code', engine: false });
     assert.match(bad.text, /verdict: not-executable/);
     const relative = await tool.execute({ path: 'd6.exe', address: '0x409800' });
     assert.match(relative.text, /absolute path/);
@@ -119,6 +122,70 @@ test('an unavailable engine downgrades the probe instead of dropping it', () => 
 
   const table = plan.find((entry) => entry.action.includes('indirect jump'));
   assert.equal(table.probe.kind, 'pointer', 'a table entry must stay a pointer claim');
+});
+
+test('when both can run, the engine this plugin starts is preferred', () => {
+  // A wrapped provider's readiness is a belief about a sandbox we cannot
+  // inspect. The first call is where that belief is tested, and the loss is
+  // invisible until then. An engine we start either runs or explains itself.
+  const plan = planNextSteps({
+    structure,
+    unresolved: [],
+    providers: {
+      providers: {
+        ghidra: { ready: true, reason: null },
+        'ghidra-local': { ready: true, reason: null },
+      },
+    },
+  });
+  const tls = plan.find((entry) => entry.action.includes('TLS callback'));
+  assert.equal(tls.probe.tool, 'probe_address');
+  assert.equal(tls.probe.via, 'ghidra-local');
+  assert.equal(tls.probe.tier, 'engine');
+  assert.equal(tls.provider.ready, true);
+});
+
+test('a broken wrapper falls back to the first-party twin, not to a weaker claim', () => {
+  // This is the 1.8.7 case: REA's Ghidra provider cannot start on this host,
+  // but the same Ghidra installation runs fine when this plugin drives it. The
+  // probe stays at engine tier and names the engine that will actually run.
+  const plan = planNextSteps({
+    structure,
+    unresolved: [],
+    providers: {
+      providers: {
+        ghidra: { ready: false, reason: 'the JVM cannot create <projectPath>/*.gpr' },
+        'ghidra-local': { ready: true, reason: null },
+      },
+    },
+  });
+  const tls = plan.find((entry) => entry.action.includes('TLS callback'));
+  assert.equal(tls.probe.tool, 'probe_address');
+  assert.equal(tls.probe.tier, 'engine');
+  assert.equal(tls.probe.via, 'ghidra-local');
+  assert.equal(tls.blocked, undefined, 'a working twin is not a block');
+  assert.equal(tls.provider.ready, true);
+  assert.equal(tls.provider.key, 'ghidra', 'the step is still about the wrapped provider');
+  // The confirm line must not tell the reader to call a tool known to fail.
+  assert.doesNotMatch(tls.confirm, /^inspect_address_context/);
+  assert.match(tls.confirm, /ghidra-local/);
+});
+
+test('with no engine at all the probe drops to a structural check', () => {
+  const plan = planNextSteps({
+    structure,
+    unresolved: [],
+    providers: {
+      providers: {
+        ghidra: { ready: false, reason: 'Ghidra not installed' },
+        'ghidra-local': { ready: false, reason: 'Ghidra not installed' },
+      },
+    },
+  });
+  const tls = plan.find((entry) => entry.action.includes('TLS callback'));
+  assert.equal(tls.probe.tool, 'probe_address');
+  assert.equal(tls.probe.tier, 'local');
+  assert.match(tls.blocked, /Ghidra not installed/);
 });
 
 test('a ready engine keeps the engine probe', () => {

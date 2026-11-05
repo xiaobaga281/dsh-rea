@@ -44,6 +44,7 @@ for (const id of generations) {
     decoyApis: built.decoyApis,
     unrecoverable: built.unrecoverable,
     sealed: built.sealed ?? [],
+    bait: built.bait ?? [],
     ...result,
   });
 }
@@ -85,7 +86,9 @@ for (const row of scored) {
     + `tracking ${row.got.tracking.length}/${row.reachable.tracking.length}  `
     + `anti ${row.got.anti.length}/${row.reachable.anti.length}  `
     + `watermark ${row.got.watermarks.length}/${row.reachable.watermarks.length}  `
-    + `| noise ${row.noise}${row.extraNoise ? ` (+${row.extraNoise} over baseline)` : ''}${row.sealed?.length ? `  sealed ${row.sealed.length}` : ''}`
+    + `| noise ${row.noise}${row.extraNoise ? ` (+${row.extraNoise} fabricated over baseline)` : ''}`
+    + `${row.ambiguous ? `  bait ${row.ambiguous} (planted by the fixture)` : ''}`
+    + `${row.sealed?.length ? `  sealed ${row.sealed.length}` : ''}`
     + `${row.decoyIocs ? `  bait: ${row.decoyIocs} IoCs / ${row.decoyApis} APIs` : ''}`);
   console.log(`    api ${row.got.api.length}/${row.reachable.api.length}  `
     + `behaviour ${row.got.behavior.length}/${row.reachable.behavior.length}  `

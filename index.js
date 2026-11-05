@@ -39,7 +39,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { classifyTool, createArtifactStore, pathOutsideScope, sessionArtifactRoot } from './lib/artifacts.js';
-import { buildExportReportTool, buildProbeAddressTool, buildPurgeArtifactsTool, buildTriageTool } from './lib/analysis-tools.js';
+import { buildDecompileAddressTool, buildExportReportTool, buildProbeAddressTool, buildPurgeArtifactsTool, buildTriageTool } from './lib/analysis-tools.js';
 import { childEnvironment, resolveConfig } from './lib/config.js';
 import { createLimiter } from './lib/concurrency.js';
 import {
@@ -303,6 +303,7 @@ export async function apply(ctx, rawConfig = {}) {
   // the report describes, so an uninstalled engine no longer makes a correct
   // plan unscorable.
   ctx.effect(() => register(buildProbeAddressTool()), 'dsh-rea: address probe tool');
+  ctx.effect(() => register(buildDecompileAddressTool()), 'dsh-rea: decompile tool');
 
   ctx.effect(() => register(buildExportReportTool({ client: clientFacade, store: artifacts, toolVersion: PLUGIN_VERSION })), 'dsh-rea: export report tool');
 

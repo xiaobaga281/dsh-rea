@@ -111,6 +111,33 @@ const IMPORT_GROUPS = [
 ];
 
 /**
+ * A padded import table: real exports, none of them called by this sample.
+ *
+ * D10's whole point. Every static analyser has a fast path that says "there is
+ * an import directory, so the imports are known" - and a loader that ships 26
+ * harmless imports plus a hash table walks straight through that assumption.
+ * The names below are ordinary kernel32/user32/advapi32 exports; none of them
+ * appears in the real hash table, so a tool that trusts the directory reports
+ * zero of the nine capabilities the sample actually uses.
+ */
+const PAD_IMPORTS = [
+  { dll: 'KERNEL32.dll', apis: [
+    'GetLastError', 'SetLastError', 'GetTickCount', 'Sleep', 'CloseHandle',
+    'GetModuleHandleA', 'GetModuleFileNameA', 'GetSystemTimeAsFileTime',
+    'InitializeCriticalSection', 'EnterCriticalSection', 'LeaveCriticalSection',
+    'DeleteCriticalSection', 'HeapAlloc', 'HeapFree', 'GetProcessHeap',
+  ] },
+  { dll: 'USER32.dll', apis: [
+    'MessageBoxA', 'GetDesktopWindow', 'GetSystemMetrics', 'CharUpperA',
+    'wsprintfA', 'GetCursorPos',
+  ] },
+  { dll: 'ADVAPI32.dll', apis: [
+    'RegOpenKeyExA', 'RegQueryValueExA', 'RegCloseKey', 'CryptAcquireContextA',
+    'CryptReleaseContext',
+  ] },
+];
+
+/**
  * Build the read-only section.
  *
  * `imports: false` is the D6 step: no descriptors, no DLL names, no thunks, so
@@ -121,7 +148,7 @@ const IMPORT_GROUPS = [
  * lands, and that depends on this section's length. They are reserved here as
  * zero-filled slots and patched in buildPE once textVa is known.
  */
-function buildRdata(payload, { hashTable = null, imports = true, tls = false, dispatch = 0 } = {}) {
+function buildRdata(payload, { hashTable = null, imports = true, tls = false, dispatch = 0, importGroups = IMPORT_GROUPS } = {}) {
   const parts = [];
   let cursor = 0;
   const put = (buffer, padding = 0) => {
@@ -135,9 +162,9 @@ function buildRdata(payload, { hashTable = null, imports = true, tls = false, di
   const dllNameAt = [];
   const thunkAt = [];
   if (imports) {
-    descriptorsAt = put(Buffer.alloc(20 * (IMPORT_GROUPS.length + 1)));
-    for (const entry of IMPORT_GROUPS) dllNameAt.push(put(Buffer.from(`${entry.dll}\0`, 'latin1'), 2));
-    for (const entry of IMPORT_GROUPS) {
+    descriptorsAt = put(Buffer.alloc(20 * (importGroups.length + 1)));
+    for (const entry of importGroups) dllNameAt.push(put(Buffer.from(`${entry.dll}\0`, 'latin1'), 2));
+    for (const entry of importGroups) {
       const thunk = Buffer.alloc(4 * (entry.apis.length + 1));
       thunkAt.push({ at: put(thunk), entry, names: entry.apis });
     }
@@ -673,8 +700,57 @@ const GENERATIONS = {
       decoys: decoys.length,
       decoyIocs: BAIT_IOCS.length,
       decoyApis: BAIT_APIS.length,
+      // Declared the same way sealed literals are: the scorer needs to know
+      // which reported values the fixture itself planted, or it charges the
+      // tool for reading the file correctly.
+      bait: BAIT_IOCS,
       unrecoverable: true,
       pe: { imports: false, tls: true, dispatch: 24 },
+    };
+  },
+
+  /**
+   * D10: the import directory is back, and it lies by being complete.
+   *
+   * Every analyser has the same fast path - "there is an import directory, so
+   * the imported functions are known". D6 removed the directory to force hash
+   * recovery; D10 leaves it in place and fills it with 26 real exports the
+   * sample never calls. A tool that stops at the directory reports twenty-six
+   * harmless names and none of the nine capabilities that matter.
+   *
+   * Nothing here is unrecoverable. The hash table is the same ROR13 table as
+   * D6, the TLS callback and dispatch table are unchanged, and every string is
+   * reachable. The only thing being tested is whether "imports exist" is
+   * treated as "imports are complete".
+   */
+  D10: () => {
+    const sealed = rc4(Buffer.from('runtime-derived-key-placeholder', 'latin1'),
+      records(seal([ENDPOINTS[1], ANTI[8], IOC_TEXT[2], `canary=${CANARY[0]}`])));
+    const inner = xorRepeat(records([
+      ...track([ENDPOINTS[0], ...MARKERS, ...ANTI.slice(0, 8)]),
+      'cfg=rc4;key=derive(GetVolumeInformationA.serial);',
+    ]), NESTED_KEY);
+    track([ENDPOINTS[2], ENDPOINTS[3], ENDPOINTS[4]]);
+    const custom = Buffer.concat([
+      Buffer.from('abc=', 'latin1'), Buffer.from(B64_ALPHABET, 'latin1'), Buffer.from(';\0', 'latin1'),
+      b64Custom(deflateSync(records(track([ENDPOINTS[2], ...ANTI.slice(8), ...IOC_TEXT])))),
+      Buffer.from('\0', 'latin1'),
+    ]);
+    const decoys = decoyBlobs(18, 1536, 0x51bd2e77);
+    return {
+      note: 'a complete-looking import table of 26 unused exports beside the ROR13 hash table',
+      payload: Buffer.concat([
+        Buffer.from('sealed=', 'latin1'), sealed, Buffer.from('\0', 'latin1'),
+        Buffer.from(`cfg=deflate+xor;key=${Buffer.from(NESTED_KEY).toString('hex')};\0`, 'latin1'),
+        deflateSync(inner), Buffer.from('\0', 'latin1'),
+        interleave(ENDPOINTS[3], ENDPOINTS[4]), Buffer.from('\0', 'latin1'),
+        custom,
+        ...decoys,
+      ]),
+      hashTable: IMPORT_GROUPS.flatMap((group) => group.apis).map(ror13Hash),
+      decoys: decoys.length,
+      unrecoverable: true,
+      pe: { imports: true, importGroups: PAD_IMPORTS, tls: true, dispatch: 24 },
     };
   },
 };
@@ -720,6 +796,7 @@ export function buildGeneration(id) {
     decoys: spec.decoys ?? 0,
     decoyIocs: spec.decoyIocs ?? 0,
     decoyApis: spec.decoyApis ?? 0,
+    bait: spec.bait ?? [],
     unrecoverable: Boolean(spec.unrecoverable),
     sealed: [...sealedValues],
   };

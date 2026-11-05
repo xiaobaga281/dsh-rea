@@ -137,6 +137,55 @@ email G@I...mAC       email GGGFG@GG.HPd     domain gXZ.cN
 
 安装位置：`<repo>/.tools/`（`ghidra_12.1.4_PUBLIC` + `jdk-21.0.13+9`），C 盘只留 `rea-engines/config.json` 里的两个路径字符串。若宿主限制子进程只能写工作区，`TMP`/`TEMP`/`APPDATA` 必须一并指过去，否则 REA 的私有运行目录会让 JVM 在写 `java_home.save` 时被拒，Ghidra 会误报「找不到 JDK」。
 
+## 1.8.7：不再问 REA 要引擎
+
+1.8.6 的判断是「第五道门堵不上」。门确实堵不上——但那道门只属于 REA 的那条路。`analyzeHeadless.bat` 一直在安装目录里，谁调用它，项目目录就由谁决定。
+
+### 五个门，一个都不需要绕
+
+| 门 | REA 路径 | 本插件自己启动 |
+| --- | --- | --- |
+| tmp / cache / config | 私有运行时内，JVM 不可写 | `_JAVA_OPTIONS` 指到自有目录 |
+| ghidra.log | `-log` 由 REA 固定 | 换成无 include 的 log4j 配置，只写 stderr |
+| 项目目录 | `-projectPath` 由 REA 指定 | 由本插件指定 |
+
+三个真实障碍，都与权限无关：
+
+1. Ghidra 拒绝任何以 `.` 开头的路径元素，`~/.dsh/**` 一律不可用；
+2. 安装路径含非 ASCII 时，`generic.log4j.xml` 的相对 include 经 `jar:file:` 百分号编码后失败，启动中止；
+3. `-process` 接的是可选**程序**名，传项目名会让 Ghidra 找不到程序而中止。
+
+### 结果
+
+| 代际 | verify（1.8.6 → 1.8.7） | score |
+| --- | --- | --- |
+| D6 | local → **引擎档，`tls_callback_0`** | 89.0% → 100% |
+| D7 / D8 | local → **引擎档** | 100% |
+| D9 | local → **引擎档** | 92.8% → 100% |
+
+规划器现在**优先**用自己的引擎：被包裹 provider 的「就绪」是对看不见的沙箱的猜测，第一次调用才是验证；1.8.6 的 D6 就死在那次验证上。
+
+### D10：齐全的导入表
+
+十代满分说明阶梯失去区分度，所以 D10 换个方向——26 个真实但从不调用的导出，紧挨着 ROR13 真表。工具里那行 `if (named >= 24) return imports;` 让它在 D10 上拿到 **api 1/9、behaviour 4/6、84.4%**。
+
+修法不是调阈值，是承认那句话不成立：目录被填满是「名字被写过」，不是「名字被写全了」。现在无论多满都扫哈希表，`namedCount` / `hashedCount` 分开上报，`overlappingSources` 标出冲突，规划里多一步「决定 loader 走哪一套」。
+
+### 评分：fabricated 与 ambiguous
+
+D9 的 22 条噪声 = 8 条良性 + 12 条自己种的诱饵 + 2 条从诱饵派生的 host。工具一条都没编造，旧算法却按 42.1% 扣分。
+
+现在防守方用 `bait:` 声明种下的值（与 `seal()` 同一套自证逻辑），评分分开：
+
+| 代际 | noise | ambiguous | fabricated | precision |
+| --- | --- | --- | --- | --- |
+| D9 | 22 | 12 | 10 | 100% |
+| D10 | 7 | 0 | 7 | 100% |
+
+### 饱和
+
+十一代全部 100%。这不是「完美」，是**这批代际已经测不出东西了**；「weakest D1」只是并列排序的产物。下一步要么换样本轴（真实加壳、Go/Rust 产物），要么覆盖动态路径（Frida 至今零覆盖）——继续加 D11 同类变形只会继续满分。
+
 ## 1.8.6：verify 不再依赖引擎
 
 1.8.5 收尾时列了一个「还剩」的缺口：Ghidra 的 `ghidra.log` 写不进 REA 的私有运行目录。这一轮把它堵上了，然后撞上第五道门。
