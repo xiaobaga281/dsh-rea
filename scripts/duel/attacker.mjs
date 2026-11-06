@@ -10,6 +10,7 @@
 import { readFileSync } from 'node:fs';
 
 import { apply } from '../../index.js';
+import { TRACKING_RULES } from '../../lib/intel.js';
 import { APIS, BEHAVIOURS, CANARY, ENDPOINTS, IOC_TEXT, PLAN } from './truth.mjs';
 
 const TRUTH_VALUES = new Set([...ENDPOINTS, ...IOC_TEXT, ...CANARY]);
@@ -56,6 +57,19 @@ function readSavedJson(text) {
   try { return JSON.parse(readFileSync(match[1].trim(), 'utf8')); } catch { return null; }
 }
 
+/** Family ids from the text report, for the run where no JSON was persisted. */
+function scrapeTrackingFamilies(text) {
+  const byLabel = new Map(TRACKING_RULES.map((rule) => [rule.label.toLowerCase(), rule.id]));
+  const ids = [];
+  for (const line of String(text).split('\n')) {
+    const match = /^\[(?:critical|high|medium|low)\]\s+(.+?)\s+—\s+\d+ markers?$/.exec(line);
+    if (!match) continue;
+    const id = byLabel.get(match[1].trim().toLowerCase());
+    if (id) ids.push(id);
+  }
+  return ids;
+}
+
 /**
  * Technique identity, not its evidence list. The report prints at most a few
  * evidence markers per technique, so marker-level recall measures the printer's
@@ -91,14 +105,28 @@ export async function attack(tools, path) {
     }
   } else {
     // Fallback: scrape "  @offset value" / "[channel] value — verify manually".
+    // The report marks every sample-derived value as untrusted data with an
+    // XML-like wrapper, so the wrapper has to come off before the value can be
+    // compared with the truth; without that, every scraped endpoint carries a
+    // tag and never matches.
     for (const line of ioc.text.split('\n')) {
-      const cleaned = line.replace(/^\s*(?:@\d+\s+|\[[^\]]+\]\s+)/, '').replace(/\s+—\s+verify manually\s*$/, '').trim();
+      if (/use detail=true/.test(line)) continue;
+      const cleaned = line
+        .replace(/^\s*(?:@\d+\s+|\[[^\]]+\]\s+)/, '')
+        .replace(/<\/?untrusted-[a-z-]+>/gi, '')
+        .replace(/\s+—\s+(?:unverified|verify manually)\s*$/, '')
+        .trim();
       if (!cleaned || /^[a-z ]+\(/.test(cleaned) || cleaned.startsWith('file:')) continue;
       values.add(cleaned);
     }
   }
 
-  const trackingIds = new Set((saved?.tracking?.findings ?? []).map((item) => item.id));
+  const trackingIds = new Set(saved?.tracking?.findings
+    ? saved.tracking.findings.map((item) => item.id)
+    // When the artifact could not be written (read-only profile, sandbox) the
+    // tool still prints the families; their ids are the vocabulary the ceiling
+    // was built from, so the same table maps a label back to the id it scores.
+    : scrapeTrackingFamilies(tracking.text));
   const antiTechniques = new Set(techniqueLines(anti.text));
   const allText = [ioc.text, tracking.text, anti.text, exposure.text].join('\n');
   const watermarks = CANARY.filter((value) => allText.includes(value));
@@ -106,7 +134,10 @@ export async function attack(tools, path) {
   const iocText = IOC_TEXT.filter((value) => [...values].some((item) => item.includes(value)));
   const noise = [...values].filter((value) => !TRUTH_VALUES.has(value)
     && ![ENDPOINTS, IOC_TEXT].flat().some((truth) => value.includes(truth)));
-  const unresolved = /unresolved encrypted region/i.test(ioc.text);
+  // The wording moved from "unresolved encrypted region" to "unresolved
+  // region" when the report stopped guessing that every opaque blob is
+  // encrypted; the honesty check follows the report, not the old phrase.
+  const unresolved = /unresolved (?:encrypted )?region/i.test(ioc.text);
 
   // Names and behaviours are matched case-insensitively against the report an
   // analyst would read, never read back from the module that produced them.
