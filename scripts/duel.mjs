@@ -117,6 +117,9 @@ for (const row of scored) {
     + `${pad(row.noise, 7)}${pct(row.overall)}`);
 }
 console.log(`mean ${pct(mean)}  weakest ${weakest}  precision floor ${pct(precisionFloor)}  honesty failures: ${honestyFailures.join(', ') || 'none'}`);
+if (Array.isArray(report.failed) && report.failed.length > 0) {
+  console.log(`tool failures: ${report.failed.join(', ')} - those rows are missing evidence, not scoring zero`);
+}
 console.log("json " + join(out, 'duel.json'));
 
 // The plugin registers a web server and keeps handles open; a CLI run must not

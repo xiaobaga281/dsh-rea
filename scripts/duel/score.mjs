@@ -164,6 +164,18 @@ export function scoreRow(row, ceiling, { baselineNoise = 0 } = {}) {
 export function scoreAll(rows) {
   const control = rows.find((row) => row.id === 'D0');
   if (!control) throw new Error('D0 control missing: it defines the ceiling for every other generation');
+  // A control whose tools failed produced no ceiling. Every later generation
+  // would then be scored against 0/0 - and `ratio(0, 0)` is 1 - so the run
+  // reports 100% for a target nobody analysed. A gauge that cannot tell "no
+  // findings" from "no analysis" is worse than no gauge, so refuse to score.
+  if (control.ok === false) {
+    const errors = Array.isArray(control.errors) && control.errors.length > 0 ? `: ${control.errors.join('; ')}` : '';
+    throw new Error(`D0 control failed, so there is no ceiling to score against${errors}`);
+  }
+  const emptyCeiling = Object.values(buildCeiling(control)).every((list) => !Array.isArray(list) || list.length === 0);
+  if (emptyCeiling) {
+    throw new Error('D0 control found nothing measurable (empty ceiling); refusing to score every generation at 100%');
+  }
   const ceiling = buildCeiling(control);
   const baselineNoise = Array.isArray(control.noise) ? control.noise.length : Number(control.noise ?? 0);
   const scored = rows.map((row) => (row.id === 'D0' ? {
@@ -197,5 +209,8 @@ export function scoreAll(rows) {
     honestyFailures: scored.filter((row) => row.honesty === false).map((row) => row.id),
     noisePeak: Math.max(...scored.map((row) => row.noise)),
     precisionFloor: Math.min(...scored.map((row) => row.precision)),
+    // A generation whose tools threw is not a low score, it is missing evidence;
+    // the caller reports it beside the table instead of averaging it in.
+    failed: scored.filter((row) => row.ok === false).map((row) => row.id),
   };
 }
