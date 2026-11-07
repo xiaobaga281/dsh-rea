@@ -18,6 +18,7 @@
     "lib/*.js",
     "lib/*.mjs",
     "scripts/*.mjs",
+    "scripts/*.ps1",
     "scripts/duel/*.mjs",
     "scripts/ghidra/*",
     "cordis.patch.yml",

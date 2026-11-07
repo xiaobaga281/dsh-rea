@@ -39,7 +39,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { classifyTool, createArtifactStore, pathOutsideScope, sessionArtifactRoot } from './lib/artifacts.js';
-import { buildDecompileAddressTool, buildExportReportTool, buildProbeAddressTool, buildPurgeArtifactsTool, buildTriageTool } from './lib/analysis-tools.js';
+import { buildCorrelateSamplesTool, buildDecompileAddressTool, buildExportReportTool, buildProbeAddressTool, buildPurgeArtifactsTool, buildTriageTool } from './lib/analysis-tools.js';
 import { childEnvironment, resolveConfig } from './lib/config.js';
 import { createLimiter } from './lib/concurrency.js';
 import {
@@ -299,6 +299,13 @@ export async function apply(ctx, rawConfig = {}) {
     },
   };
   ctx.effect(() => register(buildTriageTool(triageOptions)), 'dsh-rea: triage tool');
+  // Family pivot: group a corpus by imphash / PDB GUID / Rich before anyone
+  // spends a deep pass on sample number seven of the same build.
+  ctx.effect(() => register(buildCorrelateSamplesTool({
+    maxBytes: config.triageMaxBytes,
+    limit: config.batchTriageLimit,
+    store: artifacts,
+  })), 'dsh-rea: sample correlation tool');
   // The fallback for `verify` when no analyzer can start: it reads the file
   // the report describes, so an uninstalled engine no longer makes a correct
   // plan unscorable.
