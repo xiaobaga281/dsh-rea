@@ -10,7 +10,7 @@
 
 **蓝军强在"把打包进去的字面量挖出来"，弱在"标准编码的覆盖面"和"IOC 分类学的完整度"。**
 
-> **2026-11-06 更新：第一轮 P1–P6、P8–P12 修复并回归（325/325）；第二轮补上 P7，并新增内嵌 PE、指令级反分析、空格 hex、base32、JWT/SSH（331/331）；第三轮修复分析器 DoS（8 MB 的 MZ 文件从 848,720 ms 降到 3,129 ms）、XOR(UTF-16LE)、hex 容器下钻、ws/tcp/UNC/host:port、.NET 识别（336/336）。详见 §12–§14。**
+> **2026-11-06 更新：第一轮 P1–P6、P8–P12 修复并回归（325/325）；第二轮补上 P7，并新增内嵌 PE、指令级反分析、空格 hex、base32、JWT/SSH（331/331）；第三轮修复分析器 DoS（8 MB 的 MZ 文件从 848,720 ms 降到 3,129 ms）、XOR(UTF-16LE)、hex 容器下钻、ws/tcp/UNC/host:port、.NET 识别（336/336）。第四轮（11-07）攻"来源归因"层：新增 identity 模块（imphash / CodeView / Rich / 入口异常 / 时间戳注记）与 `rea_correlate_samples` 家族聚类工具，并打回 RSDS 布局偏移与重叠节回落两处真 bug（344/344）。详见 §12–§15。**
 
 - 插件自带靶场（D0–D10）在产物目录可写时 **满分 100%**，11 代全部 4/4–5/5 endpoint、9/9 API、6/6 行为、honesty 全部通过，`verify` 由 Ghidra 命名到 `tls_callback_0`；**316/316 单元测试通过**。
 - 但同一套靶场在受限 shell 里跑出了 **"空心 100%"**：产物目录不可写 → `rea_ioc_extract` 整体失败 → D0 天花板是 0 条 → `0/0` 被算成 100%，评分器没有任何断言。**这是本次最严重的缺陷（P1）**：CI 里会得到绿色假象。
@@ -433,4 +433,70 @@ R3f 64 MB zlib bomb        432 ms
 - **压缩层内的 4 字节 XOR 依赖 crib 锚点**。同样 `hex(gzip(xor4))` 的链路：78 字节、含单个 `https://` 锚点的配置能还原；140 字节、含两个不同 URL 的配置，crib 对不齐就还原不出——这是已知的 keyed-XOR 设计边界，不是本轮引入的。真实配置通常更长、锚点更多，但报告里不应把它说成"必解"。
 - R3e 仍有 3.1 s 的固定成本（8 MB 全量字符串 + 多通道扫描），属于可接受范围；若要进一步压，可以把 `maxStrings`/扫描窗口按文件大小自适应。
 - P13–P16 仍未做。
+
+---
+
+## 15. 第四轮红蓝对抗（次日）：来源与家族归因
+
+前三轮都在"单文件内部"攻防。这一轮换维度：**一个初级分析师描述样本，高级分析师把样本放回它的家族**。红军靶标全部针对这一层。
+
+### 15.1 红军新靶标
+
+| 靶标 | 攻击面 | 期望蓝军看见 |
+| --- | --- | --- |
+| R4a×2 | 同一 whoami 基底、不同投递载荷 | 同一 imphash 家族 |
+| R4b | 叠加区种一条**真形制 RSDS CodeView**（guid+age+path）+ 一条假 RSDS | 解出 GUID/age/path，拒绝假记录 |
+| R4c | 在 DOS stub 里合成**完整真 Rich 头**（DanS/条目/Rich/HcR?/key） | 条目、key、偏移全部还原 |
+| R4d | 把 .text VirtualSize 放大到 0x40000、入口移到 raw 之外的"解包后 OEP"形制 | 入口异常 + 导入表仍要能解析 |
+| R4e×3 | 共享 PDB GUID 的重建对（age 7/8）+ 同 builder 路径不同 GUID | GUID 簇与路径簇分开呈现 |
+| R4f | .NET 程序集混在簇外 | 不误进任何簇 |
+
+### 15.2 首测战果（红军拿到 3 分）
+
+| # | 结果 |
+| --- | --- |
+| R4b **真记录也没被认出** | 我的 recoverCodeView 把 age 记在 at+16——真布局是 guid[16] 之后 age 在 **at+20**、path 从 **at+24**。这个偏移错误让**whoami.exe 自己的真实调试记录也被漏掉**（首次运行基线 codeView=[] 就是证据）|
+| R4d **导入表直接失明** | `rvaToOffset` 碰到虚拟范围重叠时，第一个"范围命中但 raw 不覆盖"的节直接返回 null 并终止搜索。把 .text VirtualSize 撑大即可让 whoami 的 imphash 消失——这是真实畸形 PE / 壳的通用招数，此前 intel.js 与 structure.js 两份实现都有 |
+| 聚簇键设计缺陷 | 初版把一个文件的全部记录拼成一个 key，"部分同源"（同 builder、不同 GUID）就散伙。改为**按单条记录成簇、Set 去重** |
+
+R4c Rich、R4a imphash、假 RSDS 拒识、R4f 不混簇：蓝军首测即对，保留为回归。
+
+### 15.3 蓝军新增能力（本轮实装）
+
+| 能力 | 说明 |
+| --- | --- |
+| **`lib/identity.js`（新模块）** | imphash（导入序 md5，truncated 时诚实返回 null）、CodeView RSDS（正确布局 + 混合端 GUID 规范化 + 假记录拒绝）、Rich 头（DanS/Rich/HcR?/key 四重自校验；product/build 报**原始值**，不虚构编译器名——没有离线映射表就不装作有）、入口异常（past-raw / 非 .text 入口）、时间戳（>1 年未来值自动标注"随机化戳，非构建时间"——whoami 实测 2084，微软故意行为） |
+| **triage `identity:` 行** | `rea_triage` 输出新增一行：imphash / pdb={guid,age} / rich compIds / built=… (note) / entry anomaly；入口异常同时进 anomalies |
+| **新工具 `rea_correlate_samples`** | 目录级家族聚类：sha256 全等 / imphash 家族 / PDB GUID / PDB 路径 / Rich 指纹，五个维度每簇带 caveat（"共享 imphash ≠ 归因"），已注册（重启后生效）；`rea_batch_triage` 行内同步输出 imphash 前 12 位 |
+| **重叠节回落** | intel.js 与 structure.js 的 rvaToOffset 改为"范围命中但 raw 越界 → 继续找下一节"，R4d 形制下 imphash/导入表恢复 |
+
+### 15.4 回归与实跑
+
+```
+node --test              344/344 通过（新增 test/senior-identity.test.js ×8）
+node scripts/duel.mjs    D0–D10 全部 100%，honesty failures: none
+第 1–3 轮靶标复验        全部 PASS，零回退
+```
+
+`rea_correlate_samples(rea-spec4)` 实际输出（节选）：
+
+```
+imphash families: 1 cluster(s)
+  6bdea9ee3c6b2fc91a01b2126c831437 -> R4a1, R4a2, R4b, R4c, R4d, R4e1, R4e2, R4e3
+CodeView PDB GUID: 2 cluster(s)
+  guid 9fef88d4-… -> 全部 8 个 whoami 派生
+  guid ddccbbaa-… -> R4e1, R4e2          ← 同一工程的一次性重建对
+PDB build paths: 2 cluster(s)
+  c:\build\drop4\release\drop4.pdb -> R4b, R4e3    ← 同 builder 机器/脚本
+R4f-managed.exe 不进任何簇（正确）；假 RSDS 未产生任何记录（正确）
+```
+
+whoami 基线现在自报家门：`imphash=6bdea9ee…`、`pdb=whoami.pdb {9fef88d4-9347-7fdf-…,1}`、`built=2084-… (future: randomized stamp …)`——这三项全部正确，且在修复前一项都没有。
+
+### 15.5 诚实边界
+
+- imphash 匹配是**线索不是归因**：模板化工程会撞 hash；runtime API 解析的样本 hash 近空。工具在每个簇下自带 caveat。
+- Rich 的 product id → 编译器名需要离线数据集，本插件**没有装懂**：报 `comp 255 build 32000 x12` 原始值。
+- 家族归因的最后一档——跨语料的模糊哈希（section 级 SSDEEP 类）——仍未做；它需要语料持久层，属于下一步。
+- 新工具要**重启宿主**后在 MCP 里可见；本轮改动同样在重启后生效。
 

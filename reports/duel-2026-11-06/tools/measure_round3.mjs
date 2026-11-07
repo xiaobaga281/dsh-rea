@@ -2,9 +2,9 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { extractDeepStrings, channelSummary } from '../lib/strings.js';
-import { extractIocs } from '../lib/intel.js';
-import { triageFile } from '../lib/triage.js';
+import { extractDeepStrings, channelSummary } from '../../../lib/strings.js';
+import { extractIocs } from '../../../lib/intel.js';
+import { triageFile } from '../../../lib/triage.js';
 
 const SPEC = join(process.env.TEMP ?? '.', 'rea-spec3');
 const read = (name) => readFileSync(join(SPEC, name));

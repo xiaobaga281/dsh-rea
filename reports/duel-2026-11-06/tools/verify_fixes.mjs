@@ -2,10 +2,10 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { extractDeepStrings, channelSummary } from '../lib/strings.js';
-import { extractIocs, antiAnalysisMatrix, sanitizeText, detectLeaks, parsePEImports } from '../lib/intel.js';
-import { peTlsDirectory } from '../lib/containers.js';
-import { assessBehavior } from '../lib/plan.js';
+import { extractDeepStrings, channelSummary } from '../../../lib/strings.js';
+import { extractIocs, antiAnalysisMatrix, sanitizeText, detectLeaks, parsePEImports } from '../../../lib/intel.js';
+import { peTlsDirectory } from '../../../lib/containers.js';
+import { assessBehavior } from '../../../lib/plan.js';
 
 // The shell's TEMP is a session-scoped directory; files written by hand live in
 // the user's own TEMP. Accept either.
