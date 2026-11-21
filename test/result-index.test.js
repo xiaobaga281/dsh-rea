@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createResultIndex, snapshotMeta } from '../lib/result-index.js';
+import { createResultIndex, snapshotMeta } from '../lib/infra/result-index.js';
 
 const RESULT = {
   structuredContent: {

@@ -7,7 +7,7 @@ import {
   compareBehaviorContracts,
   contractFrom,
   operationOf,
-} from '../lib/behavior.js';
+} from '../lib/static/behavior.js';
 
 test('imports classify into a family and an operation, and CRT noise classifies as nothing', () => {
   assert.deepEqual(classifyApi('CreateFileA'), { family: 'file', operation: 'create', token: 'file:create' });

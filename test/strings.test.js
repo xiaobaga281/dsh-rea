@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { channelSummary, extractDeepStrings } from '../lib/strings.js';
-import { analystExposure, extractIocs, resolveDynamicApis, trackingSurface } from '../lib/intel.js';
-import { buildAnalystExposureTool } from '../lib/intel-tools.js';
+import { channelSummary, extractDeepStrings } from '../lib/static/strings.js';
+import { analystExposure, extractIocs, resolveDynamicApis, trackingSurface } from '../lib/static/intel.js';
+import { buildAnalystExposureTool } from '../lib/surface/intel-tools.js';
 
 const wide = (text, phase = 0) => {
   const out = Buffer.alloc(text.length * 2 + 2 + phase);

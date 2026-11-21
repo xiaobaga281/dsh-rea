@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { unpackReadiness } from '../lib/unpack.js';
-import { buildUnpackTool } from '../lib/unpack-tools.js';
+import { unpackReadiness } from '../lib/dynamic/unpack.js';
+import { buildUnpackTool } from '../lib/surface/unpack-tools.js';
 
 test('unpack readiness reports a path or a precise reason', () => {
   const readiness = unpackReadiness();

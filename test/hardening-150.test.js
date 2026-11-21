@@ -4,13 +4,13 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createArtifactStore, pathOutsideScope, scopeCandidates } from '../lib/artifacts.js';
-import { createLimiter } from '../lib/concurrency.js';
-import { toSarif } from '../lib/export.js';
-import { createResultIndex } from '../lib/result-index.js';
-import { createSchemaCache } from '../lib/schema-cache.js';
-import { buildDescribeArtifactTool } from '../lib/tools.js';
-import { UPDATE_STATE, installUpdate, resolveTrustPolicy } from '../lib/update.js';
+import { createArtifactStore, pathOutsideScope, scopeCandidates } from '../lib/infra/artifacts.js';
+import { createLimiter } from '../lib/dynamic/concurrency.js';
+import { toSarif } from '../lib/surface/export.js';
+import { createResultIndex } from '../lib/infra/result-index.js';
+import { createSchemaCache } from '../lib/infra/schema-cache.js';
+import { buildDescribeArtifactTool } from '../lib/surface/tools.js';
+import { UPDATE_STATE, installUpdate, resolveTrustPolicy } from '../lib/infra/update.js';
 
 async function tempDir() {
   return mkdtemp(join(tmpdir(), 'rea-150-'));

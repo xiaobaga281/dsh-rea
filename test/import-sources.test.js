@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { HASH_ALGORITHMS, resolveImports } from '../lib/api-hash.js';
+import { HASH_ALGORITHMS, resolveImports } from '../lib/static/api-hash.js';
 
 /** A .rdata-shaped buffer holding a ROR13 table, padded so it starts aligned. */
 function table(apis) {

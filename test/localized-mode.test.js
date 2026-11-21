@@ -32,14 +32,14 @@ import http from 'node:http';
 import https from 'node:https';
 import tls from 'node:tls';
 
-import { buildExportReportTool, buildTriageTool } from '../lib/analysis-tools.js';
-import { createArtifactStore } from '../lib/artifacts.js';
-import { downloadFile, fetchText, stripProxyUserInfo } from '../lib/download.js';
-import { ENGINE_ENV_OVERRIDES, GHIDRA_RELEASE, detectGhidra, installExternalTool, installGhidra } from '../lib/engines.js';
-import { PLUGIN_ROOT } from '../lib/paths.js';
-import { describePolicy, normalizePolicyPatch, POLICY_DEFAULTS, POLICY_KEYS } from '../lib/policy-store.js';
-import { resolveConfig } from '../lib/config.js';
-import { checkForUpdate, installUpdate } from '../lib/update.js';
+import { buildExportReportTool, buildTriageTool } from '../lib/surface/analysis-tools.js';
+import { createArtifactStore } from '../lib/infra/artifacts.js';
+import { downloadFile, fetchText, stripProxyUserInfo } from '../lib/infra/download.js';
+import { ENGINE_ENV_OVERRIDES, GHIDRA_RELEASE, detectGhidra, installExternalTool, installGhidra } from '../lib/infra/engines.js';
+import { PLUGIN_ROOT } from '../lib/infra/paths.js';
+import { describePolicy, normalizePolicyPatch, POLICY_DEFAULTS, POLICY_KEYS } from '../lib/infra/policy-store.js';
+import { resolveConfig } from '../lib/infra/config.js';
+import { checkForUpdate, installUpdate } from '../lib/infra/update.js';
 
 /* ── interception layer ─────────────────────────────────────────────────── */
 

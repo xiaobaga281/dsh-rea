@@ -18,12 +18,12 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { extractDeepStrings, channelSummary } from '../lib/strings.js';
-import { resolveImports } from '../lib/api-hash.js';
+import { extractDeepStrings, channelSummary } from '../lib/static/strings.js';
+import { resolveImports } from '../lib/static/api-hash.js';
 import {
   antiAnalysisMatrix, analystExposure, capabilityProfile, extractIocs, parsePEImports,
   trackingSurface,
-} from '../lib/intel.js';
+} from '../lib/static/intel.js';
 
 // ---------------------------------------------------------------- encoders ---
 

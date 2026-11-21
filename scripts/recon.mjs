@@ -26,15 +26,15 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
-import { recoverHashedApis } from '../lib/api-hash.js';
-import { buildReadiness, compileC } from '../lib/build.js';
-import { buildBaseline, synthesizeDraft } from '../lib/baseline.js';
-import { compareBuilds, floorFromSkeleton, functionFloorFromInventory, measureToolchainFloor, unionFunctionFloors } from '../lib/compare.js';
-import { decompileWithGhidra, ghidraLocalReadiness, listFunctionsWithGhidra } from '../lib/ghidra-local.js';
-import { parsePEImports } from '../lib/intel.js';
-import { createLoopState, recordIteration } from '../lib/recon.js';
-import { readPeLayout } from '../lib/structure.js';
-import { extractStrings, triageBuffer } from '../lib/triage.js';
+import { recoverHashedApis } from '../lib/static/api-hash.js';
+import { buildReadiness, compileC } from '../lib/restore/build.js';
+import { buildBaseline, synthesizeDraft } from '../lib/restore/baseline.js';
+import { compareBuilds, floorFromSkeleton, functionFloorFromInventory, measureToolchainFloor, unionFunctionFloors } from '../lib/restore/compare.js';
+import { decompileWithGhidra, ghidraLocalReadiness, listFunctionsWithGhidra } from '../lib/restore/ghidra-local.js';
+import { parsePEImports } from '../lib/static/intel.js';
+import { createLoopState, recordIteration } from '../lib/restore/recon.js';
+import { readPeLayout } from '../lib/static/structure.js';
+import { extractStrings, triageBuffer } from '../lib/static/triage.js';
 import { TIERS, generateSpecimen } from './recon/specimen.mjs';
 
 const out = resolve(process.argv.includes('--out') ? process.argv[process.argv.indexOf('--out') + 1] : join('dist', 'recon'));

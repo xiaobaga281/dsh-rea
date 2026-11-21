@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { signManifest } from '../lib/manifest-signature.js';
+import { signManifest } from '../lib/infra/manifest-signature.js';
 
 const root = join(import.meta.dirname, '..');
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));

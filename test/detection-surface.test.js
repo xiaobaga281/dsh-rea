@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { resolveConfig } from '../lib/config.js';
+import { resolveConfig } from '../lib/infra/config.js';
 
 const ROOT = join(fileURLToPath(import.meta.url), '..', '..');
 const read = (relative) => readFile(join(ROOT, relative), 'utf8');
@@ -37,9 +37,9 @@ test('the detection-surface matrix exists with the baseline row and all DS rows,
   const doc = await read('docs/detection-surface.md');
   // Baseline row: zero target execution = zero target-side detection surface.
   assert.match(doc, /基线行：目标零执行 = 目标侧零检测面/);
-  assert.match(doc, /lib\/recon-tools\.js:\d+/);
-  assert.match(doc, /lib\/ghidra-local\.js:\d+/);
-  assert.match(doc, /lib\/unpack\.js:\d+/);
+  assert.match(doc, /lib\/surface\/recon-tools\.js:\d+/);
+  assert.match(doc, /lib\/restore\/ghidra-local\.js:\d+/);
+  assert.match(doc, /lib\/dynamic\/unpack\.js:\d+/);
   // Six columns + every dynamic row, with code citations per row.
   for (const column of ['目标进程存在', '被注入', '被调试通道', '环境异样', '令牌特殊', '行为差异']) {
     assert.ok(doc.includes(column), `missing matrix column: ${column}`);
@@ -60,7 +60,7 @@ test('the detection-surface matrix exists with the baseline row and all DS rows,
     assert.match(body, /\[(?:实测引用|分析，未实测)/, `row ${heading} has no evidence-grade tag`);
   }
   // The declared blind-spot footer quotes the existing statements.
-  assert.match(doc, /lib\/sandbox\.js:\d+/);
+  assert.match(doc, /lib\/dynamic\/sandbox\.js:\d+/);
   assert.match(doc, /UDP sendto/);
   assert.match(doc, /VMProtect/);
 });
@@ -90,12 +90,12 @@ test('static-first defaults are pinned: sample execution off, host protection on
 });
 
 test('the dynamic.js wording contradiction is fixed and the four execution tools point at the matrix', async () => {
-  const dynamic = await read('lib/dynamic.js');
+  const dynamic = await read('lib/dynamic/dynamic.js');
   assert.ok(!dynamic.includes('does not patch, inject or persist anything'),
     'the old claim contradicted probe.py Interceptor.attach and observe.py "patches the export address itself"');
   assert.match(dynamic, /docs\/detection-surface\.md/);
   assert.match(dynamic, /inject a Frida agent/);
-  for (const file of ['lib/trace-tools.js', 'lib/dynamic-tools.js', 'lib/memdump-tools.js', 'lib/observe-tools.js']) {
+  for (const file of ['lib/surface/trace-tools.js', 'lib/surface/dynamic-tools.js', 'lib/surface/memdump-tools.js', 'lib/surface/observe-tools.js']) {
     const source = await read(file);
     assert.match(source, /docs\/detection-surface\.md/, `${file} does not point at the matrix`);
   }

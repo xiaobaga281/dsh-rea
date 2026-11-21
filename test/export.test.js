@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { normalizeBundle, renderReports, toMarkdown, toSarif } from '../lib/export.js';
+import { normalizeBundle, renderReports, toMarkdown, toSarif } from '../lib/surface/export.js';
 
 const BUNDLE = {
   target: '/samples/a.exe',

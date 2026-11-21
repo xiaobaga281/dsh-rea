@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { DEFAULT_MIRRORS, compareVersions, digestFromNotes, resolveInstallTarget } from '../lib/update.js';
+import { DEFAULT_MIRRORS, compareVersions, digestFromNotes, resolveInstallTarget } from '../lib/infra/update.js';
 
 test('orders releases numerically, not lexically', () => {
   assert.equal(compareVersions('1.2.0', '1.1.0'), 1);

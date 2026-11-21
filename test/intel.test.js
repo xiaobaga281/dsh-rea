@@ -7,14 +7,14 @@ import { join } from 'node:path';
 import {
   antiAnalysisMatrix, capabilityProfile, detectLeaks, extractIocs,
   parsePEImports, sanitizeText, summarizeIocs, trackingSurface,
-} from '../lib/intel.js';
+} from '../lib/static/intel.js';
 import {
   buildAntiAnalysisTool, buildIocExtractTool, buildSanitizeReportTool,
   buildTrackingSurfaceTool,
-} from '../lib/intel-tools.js';
-import { buildDiffHintTool } from '../lib/workflow-tools.js';
-import { triageBuffer } from '../lib/triage.js';
-import { resolveConfig } from '../lib/config.js';
+} from '../lib/surface/intel-tools.js';
+import { buildDiffHintTool } from '../lib/surface/workflow-tools.js';
+import { triageBuffer } from '../lib/static/triage.js';
+import { resolveConfig } from '../lib/infra/config.js';
 
 /** A minimal PE32 whose import table names two KERNEL32 functions. */
 function syntheticPE() {

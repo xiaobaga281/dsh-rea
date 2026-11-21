@@ -32,7 +32,7 @@ REA（[github.com/morluto/rea](https://github.com/morluto/rea)，npm 包 `rea-ag
 - **产物治理**：结果默认保留 7 天并有容量上限；`sensitiveArtifacts` 让完整结果只回摘要、不落盘；`rea_purge_artifacts` 手动清理。
 - **分级提示**：反编译/重建类结果强制标注「推断，非源码」，写操作结果标注「已审计」。
 - **版本更新**：侧栏可检查 GitHub 新版本并一键安装；下载走多层镜像，任一失效自动换下一个，按 Release 公布的 SHA-256 校验（可用 `pinnedSha256` 钉死摘要）。侧栏会列出每个镜像的成功/失败原因与当前安全策略。
-- **开发者不可见（2026-11-20）**：插件自身的运行时网络原语只有 `lib/download.js` 一处，请求头固定为 `user-agent: dsh-rea` + `accept`，无版本号、无平台、无主机信息；每条出站通道的 URL/主机/请求头与用户标识结论逐项入档于「出站通道审计与本地化模式」一节，`localizedMode` 开关可把已声明的四类下载在本地拒绝。
+- **开发者不可见（2026-11-20）**：插件自身的运行时网络原语只有 `lib/infra/download.js` 一处，请求头固定为 `user-agent: dsh-rea` + `accept`，无版本号、无平台、无主机信息；每条出站通道的 URL/主机/请求头与用户标识结论逐项入档于「出站通道审计与本地化模式」一节，`localizedMode` 开关可把已声明的四类下载在本地拒绝。
 
 ## 为什么不合并工具
 
@@ -162,7 +162,7 @@ T5 交互面（`rea_compare_build` / `rea_reconstruct advance` 的 `interaction=
 | `maxBackups` | `2` | 自更新保留的 `.bak-*` 份数（0–10），避免每次更新累积 30 MB 备份。 |
 | `updateMirrors` | `[]` | 额外追加的下载镜像前缀，排在自带镜像之后，不会替换官方直连。 |
 | `networkEgressPolicy` | `warn` | 对上游标了 `openWorldHint`/`destructiveHint` 的 108 个工具的策略：`allow` 不干预、`warn` 记录审计、`deny` 直接拒绝。用于分析者侧的外联暴露控制，默认不破坏正常调用。管的是**桥接工具**的外联，不是插件自身的下载——后者见 `localizedMode` 与「出站通道审计」一节。 |
-| `localizedMode` | `false` | 插件自身下载闸门（可关）：开启后，`lib/update.js` 的检查更新与下载安装、`lib/engines.js` 的 Ghidra 与外部引擎下载——即插件已声明的四类下载路径——在走到 `lib/download.js` 之前逐条本地拒绝，错误信息写明离线准备方式（自放 pinned 归档或填 `GHIDRA_INSTALL_DIR`/外部工具路径）。已安装/已缓存引擎照常可用（缓存检测在门禁之前）。面板「安全策略」可改（与既有九个策略键同机制：面板优先于配置行）；回归断言见 `test/localized-mode.test.js`。**语义分工**：`localizedMode` 管插件自身出站，`networkEgressPolicy` 管桥接工具外联，两个闸门不混用；REA 子进程与 Ghidra JVM 是独立 OS 进程，不在本门禁覆盖范围内。 |
+| `localizedMode` | `false` | 插件自身下载闸门（可关）：开启后，`lib/infra/update.js` 的检查更新与下载安装、`lib/infra/engines.js` 的 Ghidra 与外部引擎下载——即插件已声明的四类下载路径——在走到 `lib/infra/download.js` 之前逐条本地拒绝，错误信息写明离线准备方式（自放 pinned 归档或填 `GHIDRA_INSTALL_DIR`/外部工具路径）。已安装/已缓存引擎照常可用（缓存检测在门禁之前）。面板「安全策略」可改（与既有九个策略键同机制：面板优先于配置行）；回归断言见 `test/localized-mode.test.js`。**语义分工**：`localizedMode` 管插件自身出站，`networkEgressPolicy` 管桥接工具外联，两个闸门不混用；REA 子进程与 Ghidra JVM 是独立 OS 进程，不在本门禁覆盖范围内。 |
 | `blockSampleEgress` | `true` | 样本执行期的用户态外联拦截（best-effort，可关）：`rea_side_effects` 观测期间，`connect`/`WSAConnect` 的非回环目标在 onEnter 即被写入无效 sockaddr family，使连接在真实发包前失败并记 `network:connect-blocked`；`::1`/`127.0.0.1` 放行照常观测。绕过 ntdll 的直接系统调用、raw socket、ConnectEx、UDP sendto（含 `getaddrinfo` 对真实域名发出的明文 DNS 查询）仍拦不住；`rea_trace_behavior`/`rea_memory_dump`/`rea_dynamic_probe` 不经过该观测器。双方运行在同一开关下，被拦是宿主行为不是行为差异，报告会注明。 |
 | `sandboxSampleExecution` | `false` | 内核强制沙箱的总开关（独立于 `allowSampleExecution`，绝不因其隐式开启）：开启后，四个执行工具（`rea_trace_behavior`/`rea_side_effects`/`rea_memory_dump`/`rea_dynamic_probe`）可传 `sandbox: true`，样本改经 `scripts/rea-sandbox.ps1` 在无能力 AppContainer + 禁 breakaway Job Object 内启动，Frida 按 pid attach。容器内 `connect(192.0.2.1:9)` 被内核 0ms 拒绝（WSAEACCES 10013）；回环默认同拦（豁免需管理员，实测 err=5）；UDP sendto 不拦。沙箱启动失败一律 fail-closed（「样本未运行」），绝不回落无沙箱执行。 |
 | `redactIdentity` | `true` | 宿主身份脱敏（可关）：工具输出文本里的本机机器名→`[HOSTNAME]`、账号名→`[USERNAME]`、本机主目录前缀→`[USERPROFILE]`（会话内可逆 restore；范围校验/inside() 在还原之后用真实路径执行，分页句柄照常可用）；同时把被执行样本的环境变量身份（`COMPUTERNAME`/`USERNAME`/`USERDOMAIN`，POSIX 为 `HOSTNAME`/`USER`）替换为中性固定值，双方同值保证对照公平。样本内嵌的**他人**路径（如 PDB `C:\Users\builder\x.pdb`）是证据，原样保留。`state`/full JSON 等落盘文件保留真实路径——它们是本机文件，分页经 `rea_read_artifact` 还原句柄。 |
@@ -237,9 +237,9 @@ next steps: Do not trust decompiler output yet: locate the OEP / unpack before s
 
 | 模块 | 做了什么 |
 | --- | --- |
-| `lib/android.js` | 用文件句柄 seek 到尾部找 EOCD，读中央目录：652 条记录、v2 签名块、dex 数量、ABI 分布、未压缩体积。不整文件读，不解压，不执行 |
-| `lib/axml.js` | 自己解析二进制 `AndroidManifest.xml`：字符串池（UTF-8/UTF-16）、start element、类型化属性。**不需要 apktool，也不需要 JVM** |
-| `lib/triage.js` | 档案类格式不再跑 PE 判据：反分析标记、XOR 探针、未解析高熵区全部跳过；新增 verdict `android-package` |
+| `lib/static/android.js` | 用文件句柄 seek 到尾部找 EOCD，读中央目录：652 条记录、v2 签名块、dex 数量、ABI 分布、未压缩体积。不整文件读，不解压，不执行 |
+| `lib/static/axml.js` | 自己解析二进制 `AndroidManifest.xml`：字符串池（UTF-8/UTF-16）、start element、类型化属性。**不需要 apktool，也不需要 JVM** |
+| `lib/static/triage.js` | 档案类格式不再跑 PE 判据：反分析标记、XOR 探针、未解析高熵区全部跳过；新增 verdict `android-package` |
 
 顺带修掉两个真实的显示缺陷：`regionnull`（高熵区没有 RVA 时拼出了 `null`），以及档案报告里重复三遍的 `not parsed`。
 
@@ -289,7 +289,7 @@ packers: none matched
 
 | 缺陷 | 现象 | 改法 |
 | --- | --- | --- |
-| **容器没被识别** | 没有任何 packer 签名命中，却判定"可能加壳" | 新增 `lib/installer.js`：按签名识别 Inno / NSIS / InstallShield / 7z / RAR / ZIP / PyInstaller / Electron，并读出版本号 |
+| **容器没被识别** | 没有任何 packer 签名命中，却判定"可能加壳" | 新增 `lib/infra/installer.js`：按签名识别 Inno / NSIS / InstallShield / 7z / RAR / ZIP / PyInstaller / Electron，并读出版本号 |
 | **熵算错了对象** | 全文件熵把载荷算进代码 | 增加 `mapped image` 熵（最后一个节为止），判定改用镜像熵 |
 | **28 MB 里 5 个巧合** | 随机 dword 撞上字典哈希，被报成「5 个从哈希解析出的导入」 | 哈希命中必须成簇：≥3 条且相邻 ≤64 字节；D6–D10 的表是连续 dword 数组，一条不少 |
 | **「120 sampled」其实是前 120 条** | 采样停在大文件开头，也就是 DOS 头与 `.text` 起始 | 32 个窗口均匀覆盖全文 |
@@ -471,7 +471,7 @@ Ghidra 要在 `-projectPath` 里建 `.gpr` / `.rep`，而那个路径同样在 R
 
 #### `verify` 的两档
 
-新增 `lib/probe.js` 与自有工具 `rea_probe_address`：读文件、查节表，回答两个问题。
+新增 `lib/dynamic/probe.js` 与自有工具 `rea_probe_address`：读文件、查节表，回答两个问题。
 
 | 断言类型 | 问的问题 | 判据 |
 | --- | --- | --- |
@@ -521,11 +521,11 @@ D8 的配置放在 `cfg=deflate+xor;key=2b8d41f0;` 后面。手工打开只有�
 
 | 位置 | 改了什么 |
 | --- | --- |
-| `lib/strings.js` | 容器阶段读取 `cfg=…xor…;key=<hex>;`，用声明的 key 解 inflate 结果后再挖一层。限制 hex 2–8 字节、只在前 4 KiB 找，避免把无关文本里的 `key=` 当成指令 |
-| `lib/api-hash.js` | `buildHashIndex` / `recoverHashedApis` 支持 `salt`：每个名字多一条 `hash ^ salt` 索引，算法标 `+salt`；`resolveImports` 透传 |
-| `lib/structure.js` | `structureProfile(bytes, { salt })`，输出 `hashedApis.salt` |
-| `lib/triage.js` | 先解字符串、提取 `salt=0x…`，再解析导入与结构；隐藏字符串列表优先保留 `cfg=` / `salt=` 行，不让截断把它丢掉 |
-| `lib/plan.js` / `lib/analysis-tools.js` | 报告写 `mul31-xor-2f with salt 0x5d3a91c7`，而不是把 `+salt` 当成算法名 |
+| `lib/static/strings.js` | 容器阶段读取 `cfg=…xor…;key=<hex>;`，用声明的 key 解 inflate 结果后再挖一层。限制 hex 2–8 字节、只在前 4 KiB 找，避免把无关文本里的 `key=` 当成指令 |
+| `lib/static/api-hash.js` | `buildHashIndex` / `recoverHashedApis` 支持 `salt`：每个名字多一条 `hash ^ salt` 索引，算法标 `+salt`；`resolveImports` 透传 |
+| `lib/static/structure.js` | `structureProfile(bytes, { salt })`，输出 `hashedApis.salt` |
+| `lib/static/triage.js` | 先解字符串、提取 `salt=0x…`，再解析导入与结构；隐藏字符串列表优先保留 `cfg=` / `salt=` 行，不让截断把它丢掉 |
+| `lib/static/plan.js` / `lib/surface/analysis-tools.js` | 报告写 `mul31-xor-2f with salt 0x5d3a91c7`，而不是把 `+salt` 当成算法名 |
 
 #### 结果
 
@@ -643,7 +643,7 @@ java.io.IOException: Failed to create directory: ...\rea-ghidra-<id>\tmp\<user>-
 
 修补上游需要改三份被打包的产物（`dist/ghidra`、`dist/cli-runtime`、`dist/mcp`），升级即失效，所以没有这么做。改的是**断言本身**：
 
-- 新增 `lib/engine-health.js`：工具层从错误信封里取出 `provider_id`，把失败压成一行原因（`jvm-scratch-denied` / `jdk` / `timeout` / `native-unsupported`）并记账；
+- 新增 `lib/infra/engine-health.js`：工具层从错误信封里取出 `provider_id`，把失败压成一行原因（`jvm-scratch-denied` / `jdk` / `timeout` / `native-unsupported`）并记账；
 - `providerReadiness()` 合并账本：本次会话里失败过的 provider 一律**不再声称就绪**，原因写明「上游 Windows 限制；不是 JDK 版本或安装问题」；
 - 修掉一个让探针活过引擎死亡的漏洞：`inspect_address_context` 不在 `PROVIDER_OF_CONFIRM` 里，TLS/派发表步骤从来没被打上 provider 标签，于是引擎挂了探针照发；
 - 规划器在 provider 不就绪时**删掉 `probe:` 行**并写入 `blocked`，报告不再给出一个跑不了的实验。
@@ -743,7 +743,7 @@ capability_unavailable / unsupported_provider
 | 每条实验末尾 | `confirm with: load_frida_script … [frida: unavailable - frida not on PATH]` |
 | 没有探测时的诚实默认 | `report.providers === null`，报告写「not probed」，不是「全部可用」 |
 
-实现：`lib/engines.js` 加 `providerReadiness()`（`where`/`which` 只定位、不启动引擎，Ghidra 走既有检测），`lib/plan.js` 把每条实验的 `confirm` 首词映射到 provider 并附 `ready`，`rea_triage` / `rea_batch_triage` 每次调用重新探测——中途装了 Ghidra 就会立刻显示 ready。
+实现：`lib/infra/engines.js` 加 `providerReadiness()`（`where`/`which` 只定位、不启动引擎，Ghidra 走既有检测），`lib/static/plan.js` 把每条实验的 `confirm` 首词映射到 provider 并附 `ready`，`rea_triage` / `rea_batch_triage` 每次调用重新探测——中途装了 Ghidra 就会立刻显示 ready。
 
 **关于「能不能完整逆向并反编译」，直说**：
 
@@ -776,8 +776,8 @@ capability_unavailable / unsupported_provider
 
 | 能力 | 做法 |
 | --- | --- |
-| 结构重建 | `lib/structure.js`：IAT 存在性、TLS 回调（运行在入口点之前）、调度表 `code pointer` 连片（控制流平坦化）、节区异常（W+X、raw=0、重叠） |
-| 行为归因 | `lib/plan.js`：6 类行为带证据与置信度；哈希得来的名字标 `(hash)`，最高只给 `low` |
+| 结构重建 | `lib/static/structure.js`：IAT 存在性、TLS 回调（运行在入口点之前）、调度表 `code pointer` 连片（控制流平坦化）、节区异常（W+X、raw=0、重叠） |
+| 行为归因 | `lib/static/plan.js`：6 类行为带证据与置信度；哈希得来的名字标 `(hash)`，最高只给 `low` |
 | 实验设计 | 按「单位成本买到多少信息」排序，每条点名 API/RVA、预期结果，以及**用哪个 REA 工具确认** |
 | 哈希算法族 | 五个固定算法 → 「乘数 31/33/131/1313/65599 × 加或异或 × 四个种子」共 80 个变体 |
 
@@ -820,7 +820,7 @@ capability_unavailable / unsupported_provider
 | L5 | L4 + 每份样本唯一的归属水印 | **5%** | **100%** |
 | **均值** | | **36.9%** | **100%** |
 
-新增能力（`lib/crypto-recovery.js`、`lib/api-hash.js`）：
+新增能力（`lib/static/crypto-recovery.js`、`lib/static/api-hash.js`）：
 
 | 能力 | 做法 |
 | --- | --- |
@@ -907,7 +907,7 @@ D2 从 15.5% 起步是这轮最有价值的一次测量：1.5.0 刚把「4 字�
 - `rea_diff_hint` 从"熵 + 采样字符串"升级为**导入表增量 + 新增网络 IoC + 节区熵变 + 字符串 Jaccard + 4 KB 分块重叠**的四级优先队列，对变体/补丁分析更可用（仍明确不是 CFG 结构 diff）。
 - 侧栏「安全策略」新增外联工具策略与外联工具数；`networkEgressPolicy=deny` 会在 guard 层拒绝这些工具，形成分析者侧的网络暴露闸门。
 
-**实测驱动的字符串恢复**：`lib/strings.js` 在原有 ASCII 扫描之外补了四个通道——**双相位 UTF-16LE**（奇偏移宽字符串也能抓）、UTF-16BE、**单字节 XOR 解密**（带语义锚点 + 字母占比 + 每 key 上限，抑制明文位移产生的假串）、**base64 滑动解码**（容忍相邻字节粘连）。推导出的 IoC 会单独标为 `recovered` 并提示"误报率较高、需人工核验"，不混进确证清单。
+**实测驱动的字符串恢复**：`lib/static/strings.js` 在原有 ASCII 扫描之外补了四个通道——**双相位 UTF-16LE**（奇偏移宽字符串也能抓）、UTF-16BE、**单字节 XOR 解密**（带语义锚点 + 字母占比 + 每 key 上限，抑制明文位移产生的假串）、**base64 滑动解码**（容忍相邻字节粘连）。推导出的 IoC 会单独标为 `recovered` 并提示"误报率较高、需人工核验"，不混进确证清单。
 
 **实测结果**（`npm run make-sample` 造结构化 PE32 + 干净对照 + 可运行 JS 孪生体，`npm run demo` 用真实装配跑全工具链）：
 
@@ -952,17 +952,17 @@ D2 从 15.5% 起步是这轮最有价值的一次测量：1.5.0 刚把「4 字�
 
 ## 代理
 
-下载与更新检查会读取 `HTTPS_PROXY` / `HTTP_PROXY`（含 `NO_PROXY`），通过 CONNECT 隧道走代理。Node 自己不认识这些变量，而很多本机代理只设置了系统代理，所以这一层是必要的；`localhost` / `127.0.0.1` 永远直连。代理凭证只随 CONNECT 头发给**用户自己配置的代理**，从不发给目标站；2026-11-20 起错误消息对代理串先剥 `user:pass@` 再落文本（`lib/download.js` `stripProxyUserInfo`，此前 `invalid proxy URL:` 原样回显整串、redact.js 对 userinfo 无规则，属真实泄漏点，已由 `test/localized-mode.test.js` 钉住）。
+下载与更新检查会读取 `HTTPS_PROXY` / `HTTP_PROXY`（含 `NO_PROXY`），通过 CONNECT 隧道走代理。Node 自己不认识这些变量，而很多本机代理只设置了系统代理，所以这一层是必要的；`localhost` / `127.0.0.1` 永远直连。代理凭证只随 CONNECT 头发给**用户自己配置的代理**，从不发给目标站；2026-11-20 起错误消息对代理串先剥 `user:pass@` 再落文本（`lib/infra/download.js` `stripProxyUserInfo`，此前 `invalid proxy URL:` 原样回显整串、redact.js 对 userinfo 无规则，属真实泄漏点，已由 `test/localized-mode.test.js` 钉住）。
 
 ## 出站通道审计与本地化模式
 
-本节回答「这个插件自己往哪里发包」。全仓检索结论：运行时网络原语**只有 `lib/download.js` 一处**（直连 `download.js:75`、CONNECT 隧道 `:100`、隧道内层 `:115`、TLS 握手 `:135`；UA 常量 `USER_AGENT = 'dsh-rea'` 在 `:27`，无版本号、无平台、无主机信息；两个请求头构造点在 `:174` 与 `:266`，均为字面量。行号以 2026-11-20 本轮为准，后续改动以函数名定位）；`client.js` 面板的 `fetch` 目标是同源 `/rea/*` 本地路由；仓库里没有 axios / net.connect / undici / 主动定时出站（`setInterval` 均为面板本地轮询与 helper 输出扫描）。每条通道逐项入档：
+本节回答「这个插件自己往哪里发包」。全仓检索结论：运行时网络原语**只有 `lib/infra/download.js` 一处**（直连 `download.js:75`、CONNECT 隧道 `:100`、隧道内层 `:115`、TLS 握手 `:135`；UA 常量 `USER_AGENT = 'dsh-rea'` 在 `:27`，无版本号、无平台、无主机信息；两个请求头构造点在 `:174` 与 `:266`，均为字面量。行号以 2026-11-20 本轮为准，后续改动以函数名定位）；`client.js` 面板的 `fetch` 目标是同源 `/rea/*` 本地路由；仓库里没有 axios / net.connect / undici / 主动定时出站（`setInterval` 均为面板本地轮询与 helper 输出扫描）。每条通道逐项入档：
 
 | # | 通道 | 触发方式 | URL / 主机 | 请求头 | 是否含用户标识 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 更新元数据（`lib/update.js` `fetchLatest`） | 侧栏「检查更新」按钮（POST `/rea/update/check`），无定时自动检查 | `api.github.com/repos/xiaobaga281/dsh-rea/releases/latest` → `cdn.jsdelivr.net` / `raw.githubusercontent.com` 的 `update.json`（配签名钥时另取 `.minisig`） | `user-agent: dsh-rea`、`accept: application/json, text/plain, */*`（download.js:266） | 头与 URL 均不含主机名/账号/用户路径/序列号。固有标识只剩**源 IP 与 TLS SNI**，插件无法消除，如实列为能力边界 |
+| 1 | 更新元数据（`lib/infra/update.js` `fetchLatest`） | 侧栏「检查更新」按钮（POST `/rea/update/check`），无定时自动检查 | `api.github.com/repos/xiaobaga281/dsh-rea/releases/latest` → `cdn.jsdelivr.net` / `raw.githubusercontent.com` 的 `update.json`（配签名钥时另取 `.minisig`） | `user-agent: dsh-rea`、`accept: application/json, text/plain, */*`（download.js:266） | 头与 URL 均不含主机名/账号/用户路径/序列号。固有标识只剩**源 IP 与 TLS SNI**，插件无法消除，如实列为能力边界 |
 | 2 | 更新字节（`installUpdate`） | 侧栏「下载并安装」（用户点击） | GitHub release asset，镜像前缀 `ghproxy.net` / `gh-proxy.com` / `ghfast.top` / `hub.gitmirror.com` / `github.moeyy.xyz`（先 GitHub 直连） | `user-agent: dsh-rea`、`accept: */*`（download.js:174） | 同上 |
-| 3 | 引擎下载（`lib/engines.js`） | 侧栏准备按钮或 `npm run engine <tool>`（用户显式触发） | Ghidra 12.1.4 / JADX 0.7.1 / Apktool 3.0.3 / WABT 1.0.42 / WinLibs GCC：各 GitHub release；zig 0.17.0：`registry.npmjs.org` 双包。URL 均为源内钉死的字面量 + SHA-256 校验 | 同 fetchToFile | 同上 |
+| 3 | 引擎下载（`lib/infra/engines.js`） | 侧栏准备按钮或 `npm run engine <tool>`（用户显式触发） | Ghidra 12.1.4 / JADX 0.7.1 / Apktool 3.0.3 / WABT 1.0.42 / WinLibs GCC：各 GitHub release；zig 0.17.0：`registry.npmjs.org` 双包。URL 均为源内钉死的字面量 + SHA-256 校验 | 同 fetchToFile | 同上 |
 | 4 | CONNECT 隧道 | 仅当用户配置了 `HTTPS_PROXY`/`HTTP_PROXY` | 发往**用户自己的代理**：`host: <目标 authority>`，仅当代理 URL 带 userinfo 时加 `proxy-authorization: Basic`；隧道内层对目标站重建 GET 用同样的 UA/accept | 凭证只到代理、不到目标站；错误文本已剥离 userinfo（见上） |
 | 5 | 面板 HTTP（`client.js` `api()`） | 面板轮询/按钮 | 同源 `/rea/*`（本地 DSH 宿主路由），非第三方出站 | 浏览器自身头 | 本机通信；载荷含引擎绝对路径（见「已知边界」） |
 | 6 | 开发者时通道（非插件运行时） | 开发者显式命令，不在 `localizedMode` 门禁内——它们本身就是显式触发 | `scripts/fetch-corpus.mjs` 用系统 curl（默认 UA）到 `7-zip.org` / `the.earth.li` / `sqlite.org`；`scripts/publish-release.ps1` 带 token 调 `api.github.com` | curl 默认 UA / GitHub token | 仅开发者机器、显式运行时 |
@@ -983,7 +983,7 @@ D2 从 15.5% 起步是这轮最有价值的一次测量：1.5.0 刚把「4 字�
 
 子进程也不再继承宿主的完整环境变量：只放行 `PATH`、`HOME`、`TEMP`、代理和证书相关变量，加上 REA 文档中的 `REA_*` / `HOPPER_*` 引擎变量。宿主的 API key、会话 token 不会进入第三方分析进程。子进程的工作目录固定为 `~/.dsh/rea-workspace`，分析过程不会弄脏被分析的项目。
 
-出站姿态（2026-11-20 审计）：插件运行时的网络原语只有 `lib/download.js` 一处，请求头仅 `user-agent: dsh-rea` 与 `accept`，不含主机名、账号或用户路径；代理凭证只随 CONNECT 发给用户自己配置的代理，错误文本先剥 `user:pass@`。`localizedMode=true` 时，插件自身的四类下载路径（检查更新 / 下载安装 / Ghidra / 外部引擎）在本地逐条拒绝——用法与逐通道审计见「出站通道审计与本地化模式」。REA 子进程与 Ghidra JVM 是独立 OS 进程，其外联不在本审计范围内，属已声明盲区。
+出站姿态（2026-11-20 审计）：插件运行时的网络原语只有 `lib/infra/download.js` 一处，请求头仅 `user-agent: dsh-rea` 与 `accept`，不含主机名、账号或用户路径；代理凭证只随 CONNECT 发给用户自己配置的代理，错误文本先剥 `user:pass@`。`localizedMode=true` 时，插件自身的四类下载路径（检查更新 / 下载安装 / Ghidra / 外部引擎）在本地逐条拒绝——用法与逐通道审计见「出站通道审计与本地化模式」。REA 子进程与 Ghidra JVM 是独立 OS 进程，其外联不在本审计范围内，属已声明盲区。
 
 ## 代码结构
 
@@ -991,79 +991,85 @@ D2 从 15.5% 起步是这轮最有价值的一次测量：1.5.0 刚把「4 字�
 ```
 - index.js: Host half of `dsh-rea`.
 - client.js: Sidebar half of `dsh-rea`: the environment panel, engine preparation, update controls and the security-policy switches.
-- lib/analysis-tools.js: The plugin-owned analysis tools that REA does not provide.
-- lib/android.js: What is actually inside an APK.
-- lib/api-hash.js: API-hash recovery.
-- lib/artifacts.js: Artifact spill, change-control policy and audit trail.
-- lib/autodraft.js: Automatic draft repair: turn the comparison's gaps into a new draft.
-- lib/axml.js: A reader for Android's binary XML (AXML).
-- lib/baseline.js: Mechanical baseline: turn a decompiled function inventory into compilable C.
-- lib/behavior.js: Behaviour contract: what a binary declares it writes, keeps and touches.
-- lib/build.js: Compile a reconstructed source with the plugin's own gcc.
-- lib/cil.js: Bounded CIL method-body parsing and disassembly for managed assemblies.
-- lib/compare.js: Compare a rebuilt binary with the target it was reconstructed from.
-- lib/concurrency.js: A tiny semaphore for read-only REA calls.
-- lib/config.js: Config resolution and the child's environment.
-- lib/containers.js: Container recovery: find data that is compressed or packed inside the file instead of merely encoded.
-- lib/crypto-recovery.js: Key and blob recovery for static string analysis.
-- lib/download.js: HTTP downloads and archive extraction.
-- lib/dynamic-tools.js: The opt-in dynamic probe tool.
-- lib/dynamic.js: Opt-in dynamic probing.
-- lib/engine-health.js: What the plugin remembers about its engines.
-- lib/engines.js: Engine discovery and preparation: Java, Ghidra, JADX, Apktool, WABT.
-- lib/export.js: Human- and machine-readable exports for REA's Evidence bundles.
-- lib/external-adapters.js: Capability adapters for tooling REA does not expose: TLS decryption, stream reassembly, protobuf raw decoding, and Windows debugging / ETW inventory.
-- lib/fs-browse.js: A directory picker needs a directory listing, and a directory listing is a filesystem read on the Host.
-- lib/ghidra-local.js: A first-party Ghidra runner.
-- lib/identity.js: Sample identity: the facts that let one binary be linked to its family.
-- lib/installer.js: What is appended after the last section, and what built the PE in the first place.
-- lib/intel-tools.js: Reverse-engineering and anti-tracking tools built on the local intel core.
-- lib/intel.js: Static intelligence over a sample: imports, indicators, tracking surface, anti-analysis techniques, capability profiling, and report sanitisation.
-- lib/interaction.js: GUI interaction surface: what a binary's window layer declares it handles.
-- lib/managed-internals.js: Tiny shared primitives for the PE/.NET byte parsers (lib/structure.js, lib/managed.js, lib/cil.js).
-- lib/managed.js: .NET managed-assembly manifest, parsed locally from PE bytes.
-- lib/manifest-signature.js: Optional detached signature for `update.json`.
-- lib/mcp-client.js: A stdio MCP client for one REA child process.
-- lib/memdump-tools.js: The opt-in memory-image dump tool.
-- lib/memdump.js: Rebuild a PE file from a running process's memory image.
-- lib/observe-tools.js: The opt-in side-effect comparison tool.
-- lib/observe.js: Side-effect observation through API hooks.
-- lib/paths.js: Every filesystem location `dsh-rea` owns, in one place.
-- lib/plan.js: From evidence to a plan.
-- lib/playbook-worker.mjs: Playbook worker.
-- lib/playbook.js: Trusted playbook runner.
-- lib/policy-store.js: The security policy the sidebar is allowed to change.
-- lib/probe.js: Local structural probe.
-- lib/recon-tools.js: The reconstruction loop's comparison tool.
-- lib/recon.js: The reconstruction loop: evidence in, drafts out, terminal state always.
-- lib/redact.js: Reversible redaction of this host's identity from tool output text.
-- lib/registry.js: A reconciliation layer over the Host's tool registry.
-- lib/result-index.js: Cross-session result index and structured-result snapshots.
-- lib/routes.js: The sidebar's HTTP surface.
-- lib/runtime.js: The vendored REA runtime: checksum, unpack, and the bundled skill.
-- lib/sandbox.js: Kernel-enforced sample containment: AppContainer + Job Object.
-- lib/schema-cache.js: Full-schema cache and progressive disclosure for REA's deferred catalog.
-- lib/strings.js: Deep string recovery for static analysis.
-- lib/structure.js: Structural recovery for targets that hide their shape, not just their text.
-- lib/tools.js: The tool surface: one bridge per REA tool, plus the two tools this plugin owns (`rea_catalog` and `rea_doctor`).
-- lib/trace-tools.js: The opt-in runtime behaviour comparison tool.
-- lib/trace.js: Runtime traces: run a binary in a throwaway directory and record what it did.
-- lib/triage.js: Static triage for an unknown binary - the "first ten minutes" of reverse engineering that REA's tool surface does not cover at all.
-- lib/unpack-tools.js: The static unpack tool.
-- lib/unpack.js: Static unpacking with UPX.
-- lib/update.js: Self-update: check the release feed, download through redundant mirrors, and swap the plugin directory.
-- lib/work-root.js: Where a first-party engine may keep its working files.
-- lib/workflow-tools.js: Plugin-owned workflow tools: cross-session result queries, corpus triage, local coarse diff, fuzz harness templates, and the trusted playbook runner.
+- lib/dynamic/concurrency.js: A tiny semaphore for read-only REA calls.
+- lib/dynamic/dynamic.js: Opt-in dynamic probing.
+- lib/dynamic/memdump.js: Rebuild a PE file from a running process's memory image.
+- lib/dynamic/observe.js: Side-effect observation through API hooks.
+- lib/dynamic/probe.js: Local structural probe.
+- lib/dynamic/sandbox.js: Kernel-enforced sample containment: AppContainer + Job Object.
+- lib/dynamic/trace.js: Runtime traces: run a binary in a throwaway directory and record what it did.
+- lib/dynamic/unpack.js: Static unpacking with UPX.
+- lib/infra/artifacts.js: Artifact spill, change-control policy and audit trail.
+- lib/infra/config.js: Config resolution and the child's environment.
+- lib/infra/download.js: HTTP downloads and archive extraction.
+- lib/infra/engine-health.js: What the plugin remembers about its engines.
+- lib/infra/engines.js: Engine discovery and preparation: Java, Ghidra, JADX, Apktool, WABT.
+- lib/infra/installer.js: What is appended after the last section, and what built the PE in the first place.
+- lib/infra/manifest-signature.js: Optional detached signature for `update.json`.
+- lib/infra/paths.js: Every filesystem location `dsh-rea` owns, in one place.
+- lib/infra/policy-store.js: The security policy the sidebar is allowed to change.
+- lib/infra/redact.js: Reversible redaction of this host's identity from tool output text.
+- lib/infra/result-index.js: Cross-session result index and structured-result snapshots.
+- lib/infra/runtime.js: The vendored REA runtime: checksum, unpack, and the bundled skill.
+- lib/infra/schema-cache.js: Full-schema cache and progressive disclosure for REA's deferred catalog.
+- lib/infra/update.js: Self-update: check the release feed, download through redundant mirrors, and swap the plugin directory.
+- lib/infra/work-root.js: Where a first-party engine may keep its working files.
+- lib/restore/autodraft.js: Automatic draft repair: turn the comparison's gaps into a new draft.
+- lib/restore/baseline.js: Mechanical baseline: turn a decompiled function inventory into compilable C.
+- lib/restore/build.js: Compile a reconstructed source with the plugin's own gcc.
+- lib/restore/compare.js: Compare a rebuilt binary with the target it was reconstructed from.
+- lib/restore/ghidra-local.js: A first-party Ghidra runner.
+- lib/restore/recon.js: The reconstruction loop: evidence in, drafts out, terminal state always.
+- lib/static/android.js: What is actually inside an APK.
+- lib/static/api-hash.js: API-hash recovery.
+- lib/static/axml.js: A reader for Android's binary XML (AXML).
+- lib/static/behavior.js: Behaviour contract: what a binary declares it writes, keeps and touches.
+- lib/static/cil.js: Bounded CIL method-body parsing and disassembly for managed assemblies.
+- lib/static/containers.js: Container recovery: find data that is compressed or packed inside the file instead of merely encoded.
+- lib/static/crypto-recovery.js: Key and blob recovery for static string analysis.
+- lib/static/function-matching.js: Shared function-inventory helpers: the pairing primitives used by both the restoration compare (restore layer) and the interaction extractor (static layer).
+- lib/static/identity.js: Sample identity: the facts that let one binary be linked to its family.
+- lib/static/intel.js: Static intelligence over a sample: imports, indicators, tracking surface, anti-analysis techniques, capability profiling, and report sanitisation.
+- lib/static/interaction.js: GUI interaction surface: what a binary's window layer declares it handles.
+- lib/static/managed-internals.js: Tiny shared primitives for the PE/.NET byte parsers (lib/structure.js, lib/managed.js, lib/cil.js).
+- lib/static/managed.js: .NET managed-assembly manifest, parsed locally from PE bytes.
+- lib/static/plan.js: From evidence to a plan.
+- lib/static/strings.js: Deep string recovery for static analysis.
+- lib/static/structure.js: Structural recovery for targets that hide their shape, not just their text.
+- lib/static/triage.js: Static triage for an unknown binary - the "first ten minutes" of reverse engineering that REA's tool surface does not cover at all.
+- lib/surface/analysis-tools.js: The plugin-owned analysis tools that REA does not provide.
+- lib/surface/dynamic-tools.js: The opt-in dynamic probe tool.
+- lib/surface/export.js: Human- and machine-readable exports for REA's Evidence bundles.
+- lib/surface/external-adapters.js: Capability adapters for tooling REA does not expose: TLS decryption, stream reassembly, protobuf raw decoding, and Windows debugging / ETW inventory.
+- lib/surface/fs-browse.js: A directory picker needs a directory listing, and a directory listing is a filesystem read on the Host.
+- lib/surface/intel-tools.js: Reverse-engineering and anti-tracking tools built on the local intel core.
+- lib/surface/mcp-client.js: A stdio MCP client for one REA child process.
+- lib/surface/memdump-tools.js: The opt-in memory-image dump tool.
+- lib/surface/observe-tools.js: The opt-in side-effect comparison tool.
+- lib/surface/playbook-worker.mjs: Playbook worker.
+- lib/surface/playbook.js: Trusted playbook runner.
+- lib/surface/recon-tools.js: The reconstruction loop's comparison tool.
+- lib/surface/registry.js: A reconciliation layer over the Host's tool registry.
+- lib/surface/routes.js: The sidebar's HTTP surface.
+- lib/surface/tools.js: The tool surface: one bridge per REA tool, plus the two tools this plugin owns (`rea_catalog` and `rea_doctor`).
+- lib/surface/trace-tools.js: The opt-in runtime behaviour comparison tool.
+- lib/surface/unpack-tools.js: The static unpack tool.
+- lib/surface/workflow-tools.js: Plugin-owned workflow tools: cross-session result queries, corpus triage, local coarse diff, fuzz harness templates, and the trusted playbook runner.
 - scripts/adv-gates-summary.mjs: Summarize the function-level restoration gates across all targets.
 - scripts/capability-demo.mjs: End-to-end capability dry-run: build test samples, assemble the real plugin against a fake host (which still starts the real REA child), run the local analysis tools over them, and score the findings against a known e...
 - scripts/concurrency-probe.mjs: Real-child concurrency evidence for the 157 read-only tools.
 - scripts/corpus-scan.mjs: Real-world capability scan.
+- scripts/duel/attacker.mjs: Attacker persona: use the shipped product, not the library internals.
+- scripts/duel/defender.mjs: Defender persona: keep making the target harder.
+- scripts/duel/score.mjs: The duel's scoring rules, kept free of filesystem and console work so the rules themselves can be tested instead of inferred from a table printed by a CLI run.
+- scripts/duel/truth.mjs: Shared ground truth for the duel.
 - scripts/duel.mjs: Two-persona duel.
 - scripts/fetch-corpus.mjs: Real-world corpus fetcher.
 - scripts/harden-ladder.mjs: Hardening ladder: measure what the analyser actually recovers as a target gets progressively better at hiding.
 - scripts/host-matrix.mjs: Host compatibility gate.
 - scripts/install-engine.mjs: Prepare one engine from the pinned release list, the same path the sidebar uses.
 - scripts/make-sample.mjs: Build reproducible test samples for a capability dry-run.
+- scripts/recon/specimen.mjs: R0–R5 specimens: real compiled targets with a source-level truth.
 - scripts/recon-restore.mjs: Function-level restoration review against a real target.
 - scripts/recon.mjs: Reconstruction loop report: R0–R5.
 - scripts/triage-baseline.mjs: Triage calibration report.
@@ -1122,7 +1128,7 @@ npm test && npm run pack   # → dist/dsh-rea-<version>.tgz（package/ 为根）
 - 执行路径有四条：`rea_dynamic_probe`、`rea_trace_behavior`、`rea_memory_dump` 与 `rea_side_effects`。四者默认关闭，需 `allowSampleExecution: true` + 每次 `confirm: true`；样本在用户机器上真实运行，**没有沙箱**。其余所有分析路径仍然只读字节、不执行样本。宿主保护默认开、均可关：`blockSampleEgress` 只在 `rea_side_effects` 的观测器里把非回环 `connect`/`WSAConnect` 在真实发包前打断（用户态 best-effort——绕过 ntdll 的直接系统调用、raw socket、ConnectEx、UDP sendto、内核级逃逸仍拦不住，且另外三条执行路径不经该观测器）；`redactIdentity` 把工具输出里的本机机器名/账号名/主目录路径换成 `[HOSTNAME]`/`[USERNAME]`/`[USERPROFILE]` 占位符（会话内 restore 可逆，范围校验在还原后用真实路径执行），并遮蔽被执行样本的环境变量身份（只覆盖 getenv，`GetComputerNameW`/`GetUserNameW` 等 Win32 调用仍见真值）。`state`/full JSON 落盘文件保留真实路径——它们是本机文件；样本内嵌的他人身份串（如 PDB 构建机路径）是证据，不脱敏。
 - **插件自身的残余披露面（如实入档，不宣称已脱敏）**：`redactIdentity` 只替换本机机器名、账号名与主目录前缀三个精确串——**非 home 前缀的绝对路径**（分析者自选的 work-root、目标文件路径）不在脱敏规则内，会原样出现在工具输出里；面板 `/rea/environment` 载荷与宿主日志含引擎安装路径/更新安装目标路径，消费者是本机浏览器与本地日志，不进模型会话；磁盘产物按设计保留原文（spill 发生在脱敏之前、动态四件套 full JSON、`writeBinary` 二进制证据）。插件自身出站的通道清单、请求头构成与用户标识结论见「出站通道审计与本地化模式」一节；REA 子进程与 Ghidra JVM 的外联属独立 OS 进程，为已声明盲区。
 - `rea_memory_dump` 的 entry 观测有两条已声明的盲区，`entry: none` 一律不得读成「没有发生」：①watch 覆盖面——2026-11-20 起为**进程级** Stalker watch：mark 时刻存活的全部线程 + 之后经 `ntdll!NtCreateThreadEx` 新建的线程（onLeave 按起始地址过滤 frida 系模块、上限 16、首次命中即 unfollow），多线程壳「worker 线程标记、别的线程跳入」的场景已由多线程 gcc 夹具实测命中（`test/memdump.test.js`，修复前该场景 entry 如实报 none）；仍属盲区：mark 与新建线程 onLeave 之间的竞态窗口、硬编码 syscall 建线程、超上限后 coverage 记 `partial`（`watched thread`/`watchThreads`/`followedCount` 写进报告）；②hook 面——2026-11-20 起为 **kernel32 + ntdll 双层**：`kernel32!VirtualProtect`/`VirtualAlloc` 之外并列钩住 `ntdll!NtAllocateVirtualMemory`/`NtProtectVirtualMemory`，壳经 `GetProcAddress(GetModuleHandleW("ntdll.dll"), ...)` 直调 ntdll 导出的标记已可观测（直调 gcc 夹具实测：修复前无任何 exec-mark，修复后 `oep signal: NtProtectVirtualMemory ... layer=ntdll` 且 entry 命中；kernel32 调用方按来源归因仍记 `VirtualAlloc`/`VirtualProtect`，不重复记账）；**仍盲**：纯 shellcode 直统调用——`syscall` 指令不经过任何 ntdll 导出，两层钩子都看不见，如实声明不宣称覆盖。不对 VMProtect/虚拟化壳作任何宣称。
-- `rea_memory_dump` 的观测点对 **UPX 类就地解压**永不触发（真实样本实测）：UPX 5.3.0 把节区在**映射时**就标为 RWX，stub 解压全程不发起任何 `VirtualProtect`/`VirtualAlloc` EXECUTE 标注，`oep signal` 与 `entry` 会显式报 `none`——这是观测点盲区，不是失败回退，UPX 应走 `rea_unpack`。另有实测失效模式：kernel32 hook 存在时，UPX 加壳样本运行约 8–20 s 后 Frida agent 停止响应（连 `recv('dump')` 都不回，进程仍存活）；后续二分把 root cause 收窄到 **hook `kernel32!VirtualAlloc` 本身即可让不加壳的 gcc 样本也挂起不退出**（12 s 持续存活、agent 不回 dump 请求；只挂 `VirtualProtect` 则 0.36 s 正常退出），验证员再补 where.exe / cmd.exe / where 等系统程序的同样观测——**失活不依赖样本类型，hook VirtualAlloc 是充分条件**，与 UPX 无关，VirtualAlloc hook 是 exec-mark 观测点不能移除——T3 定位实验（2026-11-19，A/B 矩阵 34 轮 + S5 确认 5 轮，gcc 夹具 sleep-exit / sleep-forever / sleep-5s-exit / alloc-tramp + where.exe，frida 17.26.3）已把 root cause 钉到 **Frida Interceptor 层**：只挂 `VirtualAlloc` 即挂（gcc 样本 3/3），只挂 `VirtualProtect` 从不挂（3/3，0.5s 内正常退出）；**空回调仍挂（3/3）**——排除插件侧回调 JS（note/send/对象分配）诱因；**延迟 300ms 安装仍挂（3/3）**——排除 loader 期安装时机。机制为**进程在 hook 存在下退出时死锁**：S5（Sleep 5s 后退出）样本 agent 心跳 1.3–4.4s 正常、退出尝试（~5.3s）后永久静默、8.3s 的 dump 请求无回执、进程存活至被 helper 击杀（进程表全程 present），且死前 hook 零触发（计数=0）——不是回调累积所致；永不退出的样本同 hook 下全程正常（sleep-forever 与 alloc-tramp 均 dump-ok，exec-mark 0.28s 命中）。偶发逃逸（where.exe 1/6、A6×S1 1/3 正常死亡）证实这是竞态而非确定性行为。属 Frida 17.26.3 层问题，插件不可修、仅缓解；零外网纪律下未向上游检索/提 issue，留待有网环境。缓解已写成参数保证：加壳样本的 `delayMs` 与 `timeoutMs` 都应 ≤8000 ms（工具参数描述内注明），并优先用解包工具；T3 后 `waitForExec=true` 的 `timeoutMs` 由工具层**硬夹到 8000 ms**并在结果文本注明（`lib/memdump-tools.js` execute 内，超过部分只会延长显式失败）；`waitForExec` 对该加壳样本失败 3/3，delay 路径实测仅短 delay（≤8 s）可用。这些失败以通用超时收场，但错误输出附带 helper warnings（hook/脚本事件），能自证期间发生了什么；进程**真**死亡则显式报 `the process exited before the dump (…; entry: none)`（detached 信号 + 进程表轮询双路检测，agent 假死不冒充死亡）。
+- `rea_memory_dump` 的观测点对 **UPX 类就地解压**永不触发（真实样本实测）：UPX 5.3.0 把节区在**映射时**就标为 RWX，stub 解压全程不发起任何 `VirtualProtect`/`VirtualAlloc` EXECUTE 标注，`oep signal` 与 `entry` 会显式报 `none`——这是观测点盲区，不是失败回退，UPX 应走 `rea_unpack`。另有实测失效模式：kernel32 hook 存在时，UPX 加壳样本运行约 8–20 s 后 Frida agent 停止响应（连 `recv('dump')` 都不回，进程仍存活）；后续二分把 root cause 收窄到 **hook `kernel32!VirtualAlloc` 本身即可让不加壳的 gcc 样本也挂起不退出**（12 s 持续存活、agent 不回 dump 请求；只挂 `VirtualProtect` 则 0.36 s 正常退出），验证员再补 where.exe / cmd.exe / where 等系统程序的同样观测——**失活不依赖样本类型，hook VirtualAlloc 是充分条件**，与 UPX 无关，VirtualAlloc hook 是 exec-mark 观测点不能移除——T3 定位实验（2026-11-19，A/B 矩阵 34 轮 + S5 确认 5 轮，gcc 夹具 sleep-exit / sleep-forever / sleep-5s-exit / alloc-tramp + where.exe，frida 17.26.3）已把 root cause 钉到 **Frida Interceptor 层**：只挂 `VirtualAlloc` 即挂（gcc 样本 3/3），只挂 `VirtualProtect` 从不挂（3/3，0.5s 内正常退出）；**空回调仍挂（3/3）**——排除插件侧回调 JS（note/send/对象分配）诱因；**延迟 300ms 安装仍挂（3/3）**——排除 loader 期安装时机。机制为**进程在 hook 存在下退出时死锁**：S5（Sleep 5s 后退出）样本 agent 心跳 1.3–4.4s 正常、退出尝试（~5.3s）后永久静默、8.3s 的 dump 请求无回执、进程存活至被 helper 击杀（进程表全程 present），且死前 hook 零触发（计数=0）——不是回调累积所致；永不退出的样本同 hook 下全程正常（sleep-forever 与 alloc-tramp 均 dump-ok，exec-mark 0.28s 命中）。偶发逃逸（where.exe 1/6、A6×S1 1/3 正常死亡）证实这是竞态而非确定性行为。属 Frida 17.26.3 层问题，插件不可修、仅缓解；零外网纪律下未向上游检索/提 issue，留待有网环境。缓解已写成参数保证：加壳样本的 `delayMs` 与 `timeoutMs` 都应 ≤8000 ms（工具参数描述内注明），并优先用解包工具；T3 后 `waitForExec=true` 的 `timeoutMs` 由工具层**硬夹到 8000 ms**并在结果文本注明（`lib/surface/memdump-tools.js` execute 内，超过部分只会延长显式失败）；`waitForExec` 对该加壳样本失败 3/3，delay 路径实测仅短 delay（≤8 s）可用。这些失败以通用超时收场，但错误输出附带 helper warnings（hook/脚本事件），能自证期间发生了什么；进程**真**死亡则显式报 `the process exited before the dump (…; entry: none)`（detached 信号 + 进程表轮询双路检测，agent 假死不冒充死亡）。
 - 机械基线为了让反编译输出能编译，会放宽整型到指针的转换（`-Wno-int-conversion` 等）；它测的是控制流与导入的还原，不是类型重建。运行时底噪按「空程序同工具链编译」与「目标全桩版本」实测扣除，不手写白名单；载荷分只认指标形态（IoC/水印），普通字符串不冒充满分。
 - WinLibs GCC 16.2.0 已在本机完成安装并真实编译通过（含非 ASCII 工作路径修正：GNU ld 会写坏中文路径，编译改用相对文件名）；`npm run engine gcc` 与 zig 备用路径均可用。解包/校验/就绪另有合成归档单测覆盖。
 - REA 的 image 块与二进制 resource 块会落盘到产物目录并返回路径，供带外复核；不直接转成模型可看的图片块（宿主是否支持多模态块未做假设）。含文本的 resource 仍原样并入结果。

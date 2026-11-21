@@ -10,10 +10,10 @@
  * some calls fail legitimately. Run before publishing: `npm run concurrency`.
  */
 const ROOT = new URL('../', import.meta.url);
-const { resolveConfig, childEnvironment } = await import(new URL('lib/config.js', ROOT).href);
-const { ReaMcpClient } = await import(new URL('lib/mcp-client.js', ROOT).href);
-const { classifyTool } = await import(new URL('lib/artifacts.js', ROOT).href);
-const { createLimiter } = await import(new URL('lib/concurrency.js', ROOT).href);
+const { resolveConfig, childEnvironment } = await import(new URL('lib/infra/config.js', ROOT).href);
+const { ReaMcpClient } = await import(new URL('lib/surface/mcp-client.js', ROOT).href);
+const { classifyTool } = await import(new URL('lib/infra/artifacts.js', ROOT).href);
+const { createLimiter } = await import(new URL('lib/dynamic/concurrency.js', ROOT).href);
 const { existsSync, readFileSync } = await import('node:fs');
 
 const HOME = process.env.USERPROFILE ?? process.env.HOME ?? 'C:/Users/25616';

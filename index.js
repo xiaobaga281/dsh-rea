@@ -38,35 +38,35 @@ import { readFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { classifyTool, createArtifactStore, pathOutsideScope, sessionArtifactRoot } from './lib/artifacts.js';
-import { buildCorrelateSamplesTool, buildDecompileAddressTool, buildExportReportTool, buildProbeAddressTool, buildPurgeArtifactsTool, buildTriageTool } from './lib/analysis-tools.js';import { childEnvironment, resolveConfig } from './lib/config.js';
-import { createLimiter } from './lib/concurrency.js';
+import { classifyTool, createArtifactStore, pathOutsideScope, sessionArtifactRoot } from './lib/infra/artifacts.js';
+import { buildCorrelateSamplesTool, buildDecompileAddressTool, buildExportReportTool, buildProbeAddressTool, buildPurgeArtifactsTool, buildTriageTool } from './lib/surface/analysis-tools.js';import { childEnvironment, resolveConfig } from './lib/infra/config.js';
+import { createLimiter } from './lib/dynamic/concurrency.js';
 import {
   ENGINE_ENV_OVERRIDES, applyGhidraEnvironment, detectGhidra, engineConfigSignature,
   environmentStatus, installExternalTool, installGhidra, providerReadiness, saveEnginePaths,
-} from './lib/engines.js';
-import { listDirectories } from './lib/fs-browse.js';
-import { ReaMcpClient } from './lib/mcp-client.js';
-import { DSH_HOME, PLUGIN_ROOT, WORKSPACE_DIR } from './lib/paths.js';
-import { redactSensitive, restoreSensitive } from './lib/redact.js';
+} from './lib/infra/engines.js';
+import { listDirectories } from './lib/surface/fs-browse.js';
+import { ReaMcpClient } from './lib/surface/mcp-client.js';
+import { DSH_HOME, PLUGIN_ROOT, WORKSPACE_DIR } from './lib/infra/paths.js';
+import { redactSensitive, restoreSensitive } from './lib/infra/redact.js';
 import {
   applyPolicyPatch, describePolicy, normalizePolicyPatch, readPolicyOverrides, writePolicyOverrides,
-} from './lib/policy-store.js';
-import { buildPlaybookTool, buildProtocolTool, buildWindowsToolsTool, buildWorkflowTools } from './lib/workflow-tools.js';
-import { buildIntelTools } from './lib/intel-tools.js';
-import { buildCompareBuildTool, buildReconstructTool } from './lib/recon-tools.js';
-import { buildDynamicProbeTool } from './lib/dynamic-tools.js';
-import { buildTraceBehaviorTool } from './lib/trace-tools.js';
-import { buildMemoryDumpTool } from './lib/memdump-tools.js';
-import { buildSideEffectsTool } from './lib/observe-tools.js';
-import { buildUnpackTool } from './lib/unpack-tools.js';
-import { createToolRegistry } from './lib/registry.js';
-import { mountEnvironmentRoutes } from './lib/routes.js';
-import { createResultIndex, snapshotMeta } from './lib/result-index.js';
-import { installSkill, resolveReaPackage } from './lib/runtime.js';
-import { createSchemaCache, probeFullCatalog } from './lib/schema-cache.js';
-import { buildCatalogTool, buildDescribeArtifactTool, buildDoctorTool, buildReadArtifactTool, buildStatusTool, buildTool, publicToolName, textOf } from './lib/tools.js';
-import { checkForUpdate, configureMirrors, installUpdate, updateStatus } from './lib/update.js';
+} from './lib/infra/policy-store.js';
+import { buildPlaybookTool, buildProtocolTool, buildWindowsToolsTool, buildWorkflowTools } from './lib/surface/workflow-tools.js';
+import { buildIntelTools } from './lib/surface/intel-tools.js';
+import { buildCompareBuildTool, buildReconstructTool } from './lib/surface/recon-tools.js';
+import { buildDynamicProbeTool } from './lib/surface/dynamic-tools.js';
+import { buildTraceBehaviorTool } from './lib/surface/trace-tools.js';
+import { buildMemoryDumpTool } from './lib/surface/memdump-tools.js';
+import { buildSideEffectsTool } from './lib/surface/observe-tools.js';
+import { buildUnpackTool } from './lib/surface/unpack-tools.js';
+import { createToolRegistry } from './lib/surface/registry.js';
+import { mountEnvironmentRoutes } from './lib/surface/routes.js';
+import { createResultIndex, snapshotMeta } from './lib/infra/result-index.js';
+import { installSkill, resolveReaPackage } from './lib/infra/runtime.js';
+import { createSchemaCache, probeFullCatalog } from './lib/infra/schema-cache.js';
+import { buildCatalogTool, buildDescribeArtifactTool, buildDoctorTool, buildReadArtifactTool, buildStatusTool, buildTool, publicToolName, textOf } from './lib/surface/tools.js';
+import { checkForUpdate, configureMirrors, installUpdate, updateStatus } from './lib/infra/update.js';
 
 /** Services this plugin needs; `tools` is the registry REA's catalog lands in. */
 export const inject = ['tools', 'webServer'];

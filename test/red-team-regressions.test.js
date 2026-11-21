@@ -11,11 +11,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { gzipSync } from 'node:zlib';
 
-import { channelSummary, extractDeepStrings } from '../lib/strings.js';
-import { antiAnalysisMatrix, detectLeaks, extractIocs, sanitizeText } from '../lib/intel.js';
-import { peTlsDirectory } from '../lib/containers.js';
-import { assessBehavior } from '../lib/plan.js';
-import { findEmbeddedPes, scanCodeSignals, structureProfile } from '../lib/structure.js';
+import { channelSummary, extractDeepStrings } from '../lib/static/strings.js';
+import { antiAnalysisMatrix, detectLeaks, extractIocs, sanitizeText } from '../lib/static/intel.js';
+import { peTlsDirectory } from '../lib/static/containers.js';
+import { assessBehavior } from '../lib/static/plan.js';
+import { findEmbeddedPes, scanCodeSignals, structureProfile } from '../lib/static/structure.js';
 
 const URL = 'https://cdn-sync.example-corp.net/v3/poll';
 const values = (buffer) => extractDeepStrings(buffer, { minLength: 5 }).map((item) => item.value);

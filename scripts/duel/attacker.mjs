@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs';
 
 import { apply } from '../../index.js';
-import { TRACKING_RULES } from '../../lib/intel.js';
+import { TRACKING_RULES } from '../../lib/static/intel.js';
 import { APIS, BEHAVIOURS, CANARY, ENDPOINTS, IOC_TEXT, PLAN } from './truth.mjs';
 
 const TRUTH_VALUES = new Set([...ENDPOINTS, ...IOC_TEXT, ...CANARY]);

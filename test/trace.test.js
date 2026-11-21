@@ -5,10 +5,10 @@ import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { createArtifactStore } from '../lib/artifacts.js';
-import { buildReadiness, compileC } from '../lib/build.js';
-import { compareTraces, runTrace, snapshotFiles } from '../lib/trace.js';
-import { buildTraceBehaviorTool } from '../lib/trace-tools.js';
+import { createArtifactStore } from '../lib/infra/artifacts.js';
+import { buildReadiness, compileC } from '../lib/restore/build.js';
+import { compareTraces, runTrace, snapshotFiles } from '../lib/dynamic/trace.js';
+import { buildTraceBehaviorTool } from '../lib/surface/trace-tools.js';
 
 const sourceThatWrites = [
   '#include <stdio.h>',

@@ -4,11 +4,11 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { classifyTool, createArtifactStore } from '../lib/artifacts.js';
-import { buildTool, markUntrusted } from '../lib/tools.js';
-import { toArtifactUri, toSarif } from '../lib/export.js';
-import { detectAntiAnalysis, parseOtherContainers, triageBuffer } from '../lib/triage.js';
-import { verifyManifestText } from '../lib/manifest-signature.js';
+import { classifyTool, createArtifactStore } from '../lib/infra/artifacts.js';
+import { buildTool, markUntrusted } from '../lib/surface/tools.js';
+import { toArtifactUri, toSarif } from '../lib/surface/export.js';
+import { detectAntiAnalysis, parseOtherContainers, triageBuffer } from '../lib/static/triage.js';
+import { verifyManifestText } from '../lib/infra/manifest-signature.js';
 
 const ENTRY = { name: 'list_names', description: 'List names', inputSchema: { type: 'object', properties: {} } };
 

@@ -7,8 +7,8 @@ import assert from 'node:assert/strict';
 import { hostname, homedir } from 'node:os';
 import test from 'node:test';
 
-import { createRedactor, redactSensitive, restoreSensitive, sharedRedactor } from '../lib/redact.js';
-import { withRedactedOutput } from '../lib/tools.js';
+import { createRedactor, redactSensitive, restoreSensitive, sharedRedactor } from '../lib/infra/redact.js';
+import { withRedactedOutput } from '../lib/surface/tools.js';
 
 // Hermetic identity: the assertions never depend on the real box. The
 // hostname is spelled consistently because restore returns the canonical

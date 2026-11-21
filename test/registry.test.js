@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createToolRegistry } from '../lib/registry.js';
+import { createToolRegistry } from '../lib/surface/registry.js';
 
 const definition = (name, description = `${name} description`) => ({
   name,

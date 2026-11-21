@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { guardRequest, readRequestJson } from '../lib/routes.js';
+import { guardRequest, readRequestJson } from '../lib/surface/routes.js';
 
 const post = (headers = {}, method = 'POST') => ({ method, headers });
 

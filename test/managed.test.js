@@ -26,9 +26,9 @@ import { dirname, join } from 'node:path';
 import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { parseManaged } from '../lib/managed.js';
-import { readPeLayout, rvaToOffset, structureProfile } from '../lib/structure.js';
-import { triageBuffer } from '../lib/triage.js';
+import { parseManaged } from '../lib/static/managed.js';
+import { readPeLayout, rvaToOffset, structureProfile } from '../lib/static/structure.js';
+import { triageBuffer } from '../lib/static/triage.js';
 
 const windir = process.env.WINDIR ?? 'C:\\Windows';
 const frameworkDirs = [

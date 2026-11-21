@@ -7,10 +7,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-import { buildReadiness, compileC } from '../lib/build.js';
-import { dynamicReadiness } from '../lib/dynamic.js';
-import { buildMemoryDumpTool } from '../lib/memdump-tools.js';
-import { parseImageLayout, rebuildImageFromMemory } from '../lib/memdump.js';
+import { buildReadiness, compileC } from '../lib/restore/build.js';
+import { dynamicReadiness } from '../lib/dynamic/dynamic.js';
+import { buildMemoryDumpTool } from '../lib/surface/memdump-tools.js';
+import { parseImageLayout, rebuildImageFromMemory } from '../lib/dynamic/memdump.js';
 
 const DUMP_HELPER = fileURLToPath(new URL('../scripts/dynamic/dump.py', import.meta.url));
 

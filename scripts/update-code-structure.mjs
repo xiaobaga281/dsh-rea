@@ -12,7 +12,7 @@
  *
  * Run: node scripts/update-code-structure.mjs [--check]
  */
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -38,11 +38,20 @@ export function summarize(source) {
 }
 
 function listFiles(dir, pattern) {
+  // Recursive: lib is layered into subdirectories (infra/static/dynamic/
+  // restore/surface), and every module in them is part of the documented
+  // structure block.
   if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((name) => pattern.test(name))
-    .sort()
-    .map((name) => join(dir, name));
+  const found = [];
+  const walk = (current) => {
+    for (const name of readdirSync(current).sort()) {
+      const full = join(current, name);
+      if (statSync(full).isDirectory()) walk(full);
+      else if (pattern.test(name)) found.push(full);
+    }
+  };
+  walk(dir);
+  return found;
 }
 
 /** Every entry the block documents, in a stable order. */

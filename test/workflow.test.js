@@ -4,12 +4,12 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createResultIndex } from '../lib/result-index.js';
-import { listPlaybooks, runPlaybook, safePlaybookName } from '../lib/playbook.js';
-import { buildWindowsToolsTool, protocolToolInventory, windowsToolInventory } from '../lib/external-adapters.js';
+import { createResultIndex } from '../lib/infra/result-index.js';
+import { listPlaybooks, runPlaybook, safePlaybookName } from '../lib/surface/playbook.js';
+import { buildWindowsToolsTool, protocolToolInventory, windowsToolInventory } from '../lib/surface/external-adapters.js';
 import {
   buildBatchTriageTool, buildDiffHintTool, buildFuzzHarnessTool, buildPlaybookTool, buildQueryResultsTool,
-} from '../lib/workflow-tools.js';
+} from '../lib/surface/workflow-tools.js';
 
 async function withTemp(fn) {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-rea-workflow-'));

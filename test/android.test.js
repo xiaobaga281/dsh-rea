@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { readArchiveIndex, summarizeApk } from '../lib/android.js';
-import { summarizeManifest } from '../lib/axml.js';
-import { triageBuffer } from '../lib/triage.js';
+import { readArchiveIndex, summarizeApk } from '../lib/static/android.js';
+import { summarizeManifest } from '../lib/static/axml.js';
+import { triageBuffer } from '../lib/static/triage.js';
 
 /** Build a stored-only ZIP, which is all the index reader has to understand. */
 function buildZip(entries) {

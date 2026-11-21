@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { explainWorkRoot, rejectReason, resolveWorkRoot, resetWorkRoot } from '../lib/work-root.js';
+import { explainWorkRoot, rejectReason, resolveWorkRoot, resetWorkRoot } from '../lib/infra/work-root.js';
 
 test('a path with a dot-prefixed element is refused, because Ghidra refuses it', () => {
   // This is not a style rule. Ghidra aborts the whole launch with

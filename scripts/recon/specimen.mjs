@@ -21,7 +21,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { compileC } from '../../lib/build.js';
+import { compileC } from '../../lib/restore/build.js';
 
 export const TIERS = ['R0', 'R1', 'R2', 'R3', 'R4', 'R5'];
 

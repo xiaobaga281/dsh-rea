@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { DESTRUCTIVE_TOOLS, MUTATING_TOOLS, createArtifactStore } from '../lib/artifacts.js';
+import { DESTRUCTIVE_TOOLS, MUTATING_TOOLS, createArtifactStore } from '../lib/infra/artifacts.js';
 
 async function withStore(options, run) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-rea-artifacts-'));
@@ -80,7 +80,7 @@ test('destructive tools are a subset of the audited ones', () => {
 // --- 1.3.0: fail-closed classification, session scope, retention ----------
 
 test('a tool added by a future REA release is audited by default, not silently ignored', async () => {
-  const { classifyTool } = await import('../lib/artifacts.js');
+  const { classifyTool } = await import('../lib/infra/artifacts.js');
   const unknown = classifyTool('deploy_remote_payload', { description: 'Sends a payload to the target.' });
   assert.equal(unknown.mutating, true);
   assert.equal(unknown.inferred, true);
@@ -89,7 +89,7 @@ test('a tool added by a future REA release is audited by default, not silently i
 });
 
 test('destructive device verbs are inferred from the name, not a hardcoded list', async () => {
-  const { classifyTool } = await import('../lib/artifacts.js');
+  const { classifyTool } = await import('../lib/infra/artifacts.js');
   assert.equal(classifyTool('uninstall_adb_package').destructive, true);
   assert.equal(classifyTool('delete_device_file').destructive, true);
   assert.equal(classifyTool('push_adb_file').destructive, true);
@@ -98,12 +98,12 @@ test('destructive device verbs are inferred from the name, not a hardcoded list'
 });
 
 test('an explicit read-only declaration overrides a write-looking verb', async () => {
-  const { classifyTool } = await import('../lib/artifacts.js');
+  const { classifyTool } = await import('../lib/infra/artifacts.js');
   assert.equal(classifyTool('set_view_mode', { description: 'Read-only. Does not change any state.' }).mutating, false);
 });
 
 test('session scope rejects paths outside the allowed roots and allows those inside', async () => {
-  const { pathOutsideScope } = await import('../lib/artifacts.js');
+  const { pathOutsideScope } = await import('../lib/infra/artifacts.js');
   const roots = [join(tmpdir(), 'allowed')];
   assert.equal(pathOutsideScope({ path: join(tmpdir(), 'allowed', 'a.exe') }, roots), null);
   assert.equal(pathOutsideScope({ path: join(tmpdir(), 'elsewhere', 'a.exe') }, roots).key, 'path');

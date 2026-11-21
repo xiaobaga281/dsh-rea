@@ -24,8 +24,8 @@ const ROOT_PATH = fileURLToPath(ROOT);
 // the scoped mode into an unrestricted one and make its assertion vacuous.
 process.env.DSH_REA_POLICY_FILE = join(ROOT_PATH, 'dist', '.gate-policy-absent.json');
 const { apply } = await import(new URL('index.js', ROOT).href);
-const { childEnvironment, resolveConfig } = await import(new URL('lib/config.js', ROOT).href);
-const { classifyTool } = await import(new URL('lib/artifacts.js', ROOT).href);
+const { childEnvironment, resolveConfig } = await import(new URL('lib/infra/config.js', ROOT).href);
+const { classifyTool } = await import(new URL('lib/infra/artifacts.js', ROOT).href);
 
 const MODES = [
   { name: 'plain-node', electron: false, config: {} },
@@ -219,7 +219,7 @@ let confirmCount = 0;
   }
 
   if (registeredNames.length > 0) {
-    const { PROVIDER_OF_CONFIRM } = await import(new URL('lib/plan.js', ROOT).href);
+    const { PROVIDER_OF_CONFIRM } = await import(new URL('lib/static/plan.js', ROOT).href);
     const confirmTools = Object.keys(PROVIDER_OF_CONFIRM);
     confirmCount = confirmTools.length;
     for (const tool of confirmTools) {

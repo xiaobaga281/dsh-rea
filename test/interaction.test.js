@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { compareInteractionContracts, factIsLocatable, interactionContractFrom, interactionLimitations } from '../lib/interaction.js';
-import { readPeLayout } from '../lib/structure.js';
+import { compareInteractionContracts, factIsLocatable, interactionContractFrom, interactionLimitations } from '../lib/static/interaction.js';
+import { readPeLayout } from '../lib/static/structure.js';
 
 const IMAGE_BASE = 0x140000000;
 

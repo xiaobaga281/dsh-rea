@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { buildExportReportTool, buildPurgeArtifactsTool, buildTriageTool } from '../lib/analysis-tools.js';
-import { createArtifactStore } from '../lib/artifacts.js';
+import { buildExportReportTool, buildPurgeArtifactsTool, buildTriageTool } from '../lib/surface/analysis-tools.js';
+import { createArtifactStore } from '../lib/infra/artifacts.js';
 
 const BUNDLE = {
   target: '/samples/a.exe',

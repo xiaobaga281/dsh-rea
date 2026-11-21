@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { createArtifactStore } from '../lib/artifacts.js';
-import { buildReadiness, compileC } from '../lib/build.js';
-import { ghidraLocalReadiness } from '../lib/ghidra-local.js';
-import { createLoopState, gapsFromComparison, rankDecoderCandidates, recordIteration, renderHandoff, CONVERGENCE } from '../lib/recon.js';
-import { buildReconstructTool } from '../lib/recon-tools.js';
+import { createArtifactStore } from '../lib/infra/artifacts.js';
+import { buildReadiness, compileC } from '../lib/restore/build.js';
+import { ghidraLocalReadiness } from '../lib/restore/ghidra-local.js';
+import { createLoopState, gapsFromComparison, rankDecoderCandidates, recordIteration, renderHandoff, CONVERGENCE } from '../lib/restore/recon.js';
+import { buildReconstructTool } from '../lib/surface/recon-tools.js';
 import { TIERS, tierSource, generateSpecimen } from '../scripts/recon/specimen.mjs';
 
 function fakeCompare({ overall = 1, missing = [], added = [], unmatched = [], t2 = 'ran', t2Score = 1, mismatches = [] } = {}) {

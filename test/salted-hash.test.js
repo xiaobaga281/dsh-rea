@@ -8,11 +8,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { HASH_ALGORITHMS, buildHashIndex, recoverHashedApis } from '../lib/api-hash.js';
-import { structureProfile } from '../lib/structure.js';
-import { extractDeepStrings } from '../lib/strings.js';
-import { triageBuffer } from '../lib/triage.js';
-import { planNextSteps } from '../lib/plan.js';
+import { HASH_ALGORITHMS, buildHashIndex, recoverHashedApis } from '../lib/static/api-hash.js';
+import { structureProfile } from '../lib/static/structure.js';
+import { extractDeepStrings } from '../lib/static/strings.js';
+import { triageBuffer } from '../lib/static/triage.js';
+import { planNextSteps } from '../lib/static/plan.js';
 import { buildGeneration } from '../scripts/duel/defender.mjs';
 
 /** The per-build constant D8 hides inside its sealed config. */

@@ -11,10 +11,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { extractIocs, plausibleEmail } from '../lib/intel.js';
-import { buildIocExtractTool } from '../lib/intel-tools.js';
-import { describeStructure } from '../lib/analysis-tools.js';
-import { planNextSteps } from '../lib/plan.js';
+import { extractIocs, plausibleEmail } from '../lib/static/intel.js';
+import { buildIocExtractTool } from '../lib/surface/intel-tools.js';
+import { describeStructure } from '../lib/surface/analysis-tools.js';
+import { planNextSteps } from '../lib/static/plan.js';
 import { buildGeneration, GENERATION_IDS } from '../scripts/duel/defender.mjs';
 
 // ----------------------------------------------------------- false positives --
