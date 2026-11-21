@@ -13,12 +13,16 @@
  * This is intentionally a script rather than part of `npm test`: it starts
  * real child processes and needs the unpacked runtime.
  */
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = new URL('../', import.meta.url);
 const ROOT_PATH = fileURLToPath(ROOT);
+// The gate must not depend on the operator's saved panel policy. A policy file
+// with an empty allowedTargets overrides the row by design, which would turn
+// the scoped mode into an unrestricted one and make its assertion vacuous.
+process.env.DSH_REA_POLICY_FILE = join(ROOT_PATH, 'dist', '.gate-policy-absent.json');
 const { apply } = await import(new URL('index.js', ROOT).href);
 const { childEnvironment, resolveConfig } = await import(new URL('lib/config.js', ROOT).href);
 const { classifyTool } = await import(new URL('lib/artifacts.js', ROOT).href);
@@ -62,6 +66,7 @@ function makeHost() {
 }
 
 const results = [];
+const registeredNames = [];
 let classification = null;
 for (const mode of MODES) {
   if (mode.electron) process.env.ELECTRON_RUN_AS_NODE = '1';
@@ -72,6 +77,7 @@ for (const mode of MODES) {
     // The full-catalog probe is a separate, optional child; it is not what this
     // gate is testing, so keep the run short and deterministic.
     await apply(host.ctx, { catalogProbe: false, ...mode.config });
+    if (registeredNames.length === 0) registeredNames.push(...host.tools.map((tool) => tool.name));
     const env = childEnvironment(resolveConfig({}), process.env);
     const failures = [];
     if (env.ELECTRON_RUN_AS_NODE !== '1') failures.push('child env lost ELECTRON_RUN_AS_NODE');
@@ -103,6 +109,28 @@ for (const mode of MODES) {
           failures.push('output_directory bypassed allowedTargets');
         } catch (error) {
           if (!/allowedTargets/.test(error?.message ?? '')) failures.push(`unexpected bridged refusal: ${error?.message}`);
+        }
+      }
+      // Every plugin-owned tool that takes paths must obey the same scope; a new
+      // tool that forgets the guard is exactly what this check exists to catch.
+      const compare = host.tools.find((tool) => tool.name === 'rea_compare_build');
+      if (!compare) failures.push('rea_compare_build missing; cannot verify own-tool scope');
+      else {
+        try {
+          await compare.execute({ target: 'C:\\Windows\\System32\\kernel32.dll', rebuilt: 'C:\\Windows\\System32\\kernel32.dll', engine: false });
+          failures.push('rea_compare_build bypassed allowedTargets');
+        } catch (error) {
+          if (!/allowedTargets/.test(error?.message ?? '')) failures.push(`unexpected compare refusal: ${error?.message}`);
+        }
+      }
+      const reconstruct = host.tools.find((tool) => tool.name === 'rea_reconstruct');
+      if (!reconstruct) failures.push('rea_reconstruct missing; cannot verify loop scope');
+      else {
+        try {
+          await reconstruct.execute({ action: 'start', target: 'C:\\Windows\\System32\\kernel32.dll' });
+          failures.push('rea_reconstruct bypassed allowedTargets');
+        } catch (error) {
+          if (!/allowedTargets/.test(error?.message ?? '')) failures.push(`unexpected reconstruct refusal: ${error?.message}`);
         }
       }
     }
@@ -159,10 +187,51 @@ try {
   const readme = readFileSync(join(ROOT_PATH, 'README.md'), 'utf8');
   if (!readme.includes(`${facts.readOnly} 个只读工具`)) claimFailures.push(`README says a different read-only count than ${facts.readOnly}`);
   if (!readme.includes(`${facts.tools} 工具`)) claimFailures.push(`README does not state the registered tool count ${facts.tools}`);
+  if (!readme.includes(`${facts.routes} 路由`)) claimFailures.push(`README does not state the route count ${facts.routes}`);
 } catch (error) {
   claimFailures.push(`cannot read README.md: ${error.message}`);
 }
 for (const failure of claimFailures) console.log(`  FAIL claim ${failure}`);
+
+// Structural gate: a module nobody imports is dead code, a script entry that
+// points nowhere is a broken command, a plan that names an unregistered tool
+// is advice nobody can follow, and a stale structure block is documentation
+// drift. All four are checked here so they fail the release instead of aging.
+const structureGate = [];
+let confirmCount = 0;
+{
+  const structure = await import(new URL('scripts/update-code-structure.mjs', ROOT).href);
+  const reach = structure.moduleReachability(ROOT_PATH);
+  if (reach.unreachable.length > 0) {
+    structureGate.push(`lib modules with no consumer: ${reach.unreachable.join(', ')}`);
+  }
+  const readmeStatus = structure.readmeStructureStatus(join(ROOT_PATH, 'README.md'));
+  if (!readmeStatus.ok) structureGate.push(readmeStatus.reason);
+
+  const pkg = JSON.parse(readFileSync(join(ROOT_PATH, 'package.json'), 'utf8'));
+  for (const [name, command] of Object.entries(pkg.scripts ?? {})) {
+    const tokens = String(command).trim().split(/\s+/);
+    if (tokens[0] !== 'node') continue;
+    const file = tokens.slice(1).find((token) => !token.startsWith('-'));
+    if (file && /\.(?:mjs|js)$/.test(file) && !existsSync(join(ROOT_PATH, file))) {
+      structureGate.push(`npm script "${name}" points at missing ${file}`);
+    }
+  }
+
+  if (registeredNames.length > 0) {
+    const { PROVIDER_OF_CONFIRM } = await import(new URL('lib/plan.js', ROOT).href);
+    const confirmTools = Object.keys(PROVIDER_OF_CONFIRM);
+    confirmCount = confirmTools.length;
+    for (const tool of confirmTools) {
+      if (!registeredNames.includes(tool) && !registeredNames.includes(`mcp__rea__${tool}`)) {
+        structureGate.push(`plan confirm tool "${tool}" is registered under neither name`);
+      }
+    }
+  }
+}
+for (const failure of structureGate) console.log(`  FAIL structure ${failure}`);
+if (structureGate.length === 0) console.log(`  structure OK (module graph, scripts, ${confirmCount} confirm mappings, README block)`);
+
 console.log(`  facts tools=${facts.tools} routes=${facts.routes} readOnly=${facts.readOnly} mutating=${facts.mutating} destructive=${facts.destructive} -> dist/host-matrix.json`);
 
-process.exit(results.every((result) => result.ok) && claimFailures.length === 0 ? 0 : 1);
+process.exit(results.every((result) => result.ok) && claimFailures.length === 0 && structureGate.length === 0 ? 0 : 1);

@@ -39,8 +39,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { classifyTool, createArtifactStore, pathOutsideScope, sessionArtifactRoot } from './lib/artifacts.js';
-import { buildCorrelateSamplesTool, buildDecompileAddressTool, buildExportReportTool, buildProbeAddressTool, buildPurgeArtifactsTool, buildTriageTool } from './lib/analysis-tools.js';
-import { childEnvironment, resolveConfig } from './lib/config.js';
+import { buildCorrelateSamplesTool, buildDecompileAddressTool, buildExportReportTool, buildProbeAddressTool, buildPurgeArtifactsTool, buildTriageTool } from './lib/analysis-tools.js';import { childEnvironment, resolveConfig } from './lib/config.js';
 import { createLimiter } from './lib/concurrency.js';
 import {
   ENGINE_ENV_OVERRIDES, applyGhidraEnvironment, detectGhidra, engineConfigSignature,
@@ -49,11 +48,18 @@ import {
 import { listDirectories } from './lib/fs-browse.js';
 import { ReaMcpClient } from './lib/mcp-client.js';
 import { DSH_HOME, PLUGIN_ROOT, WORKSPACE_DIR } from './lib/paths.js';
+import { redactSensitive, restoreSensitive } from './lib/redact.js';
 import {
   applyPolicyPatch, describePolicy, normalizePolicyPatch, readPolicyOverrides, writePolicyOverrides,
 } from './lib/policy-store.js';
 import { buildPlaybookTool, buildProtocolTool, buildWindowsToolsTool, buildWorkflowTools } from './lib/workflow-tools.js';
 import { buildIntelTools } from './lib/intel-tools.js';
+import { buildCompareBuildTool, buildReconstructTool } from './lib/recon-tools.js';
+import { buildDynamicProbeTool } from './lib/dynamic-tools.js';
+import { buildTraceBehaviorTool } from './lib/trace-tools.js';
+import { buildMemoryDumpTool } from './lib/memdump-tools.js';
+import { buildSideEffectsTool } from './lib/observe-tools.js';
+import { buildUnpackTool } from './lib/unpack-tools.js';
 import { createToolRegistry } from './lib/registry.js';
 import { mountEnvironmentRoutes } from './lib/routes.js';
 import { createResultIndex, snapshotMeta } from './lib/result-index.js';
@@ -169,9 +175,13 @@ export async function apply(ctx, rawConfig = {}) {
       allowedTargets: config.allowedTargets.length,
       targets: [...config.allowedTargets],
       allowDeviceMutations: config.allowDeviceMutations,
+      allowSampleExecution: config.allowSampleExecution,
       sensitiveArtifacts: config.sensitiveArtifacts,
       artifactRetentionDays: config.artifactRetentionDays,
       networkEgressPolicy: config.networkEgressPolicy,
+      blockSampleEgress: config.blockSampleEgress,
+      redactIdentity: config.redactIdentity,
+      localizedMode: config.localizedMode,
       pinnedSha256: config.pinnedSha256,
       catalogProbe: config.catalogProbe,
       imageCapture: config.imageCapture,
@@ -224,7 +234,9 @@ export async function apply(ctx, rawConfig = {}) {
    * Paths inside our own artifact directory are always in scope (that is where
    * spilled results and reports live), and write-ish own tools are audited.
    */
-  const OWN_WRITE_TOOLS = new Set(['rea_purge_artifacts', 'rea_export_report', 'rea_run_playbook']);
+  // Execution is audited under the same policy as writes: a trace runs the sample
+  // and the draft, so the call has to be attributable after the fact.
+  const OWN_WRITE_TOOLS = new Set(['rea_purge_artifacts', 'rea_export_report', 'rea_run_playbook', 'rea_trace_behavior', 'rea_memory_dump', 'rea_side_effects']);
   const ownGuard = (name, args) => {
     // Same value-shape check as the bridged tools: no parameter-name whitelist,
     // so an own tool cannot become a path-scope bypass through a nested input.
@@ -248,10 +260,21 @@ export async function apply(ctx, rawConfig = {}) {
     const original = definition.execute;
     const guarded = {
       ...definition,
-      async execute(args, exec) {
+      async execute(rawArgs, exec) {
+        // Placeholders copied out of a redacted report are restored BEFORE the
+        // scope check, so ownGuard authorises the real path. Order is
+        // mandatory: restore → guard → execute.
+        const args = restoreSensitive(rawArgs);
         const refusal = ownGuard(definition.name, args);
         if (refusal) throw new Error(refusal);
-        return original(args, exec);
+        const result = await original(args, exec);
+        // Safety net for every own tool: host identity leaves redacted. The
+        // execution tools already wrap themselves; this is idempotent.
+        if (config.redactIdentity !== false && result !== null && typeof result === 'object') {
+          if (typeof result.text === 'string') result.text = redactSensitive(result.text);
+          if (typeof result.report === 'string') result.report = redactSensitive(result.report);
+        }
+        return result;
       },
     };
     const dispose = ctx.tools?.register(guarded);
@@ -306,6 +329,49 @@ export async function apply(ctx, rawConfig = {}) {
     limit: config.batchTriageLimit,
     store: artifacts,
   })), 'dsh-rea: sample correlation tool');
+  // The reconstruction loop's measuring stick: rebuilt binary vs target, tier
+  // by tier. Local unless the Ghidra tier is available; never executes either
+  // binary.
+  ctx.effect(() => register(buildCompareBuildTool({
+    maxBytes: config.triageMaxBytes,
+    store: artifacts,
+  })), 'dsh-rea: rebuild comparison tool');
+  // The loop itself: budget, convergence and terminal states are in lib/recon;
+  // this tool supplies the build and the comparison and persists the state.
+  ctx.effect(() => register(buildReconstructTool({
+    maxBytes: config.triageMaxBytes,
+    store: artifacts,
+    // Upstream analyzers are only named in gap lines when this session's
+    // server actually advertises them; the getter is read at gap time.
+    availableTools: () => triageOptions.availableTools,
+  })), 'dsh-rea: reconstruction loop tool');
+  // Opt-in sample execution. Off unless the policy says otherwise; the tool
+  // also requires a per-call confirmation.
+  ctx.effect(() => register(buildDynamicProbeTool({
+    config,
+    store: artifacts,
+  })), 'dsh-rea: dynamic probe tool');
+  // Runtime behaviour: execute the target and the rebuild in throwaway
+  // directories and compare output, exit code and files. Same opt-in policy and
+  // per-call confirmation as the probe.
+  ctx.effect(() => register(buildTraceBehaviorTool({
+    config,
+    store: artifacts,
+  })), 'dsh-rea: behaviour trace tool');
+  // Generic dynamic unpacking: dump the mapped main module and rebuild a PE.
+  // Same opt-in policy and per-call confirmation as the other execution paths.
+  ctx.effect(() => register(buildMemoryDumpTool({
+    config,
+    store: artifacts,
+  })), 'dsh-rea: memory dump tool');
+  // Side effects that never become files: registry, pipes, services, network.
+  // Same opt-in policy and per-call confirmation as the other execution paths.
+  ctx.effect(() => register(buildSideEffectsTool({
+    config,
+    store: artifacts,
+  })), 'dsh-rea: side-effect observation tool');
+  // Static unpacking: a file transformation, not execution. UPX only.
+  ctx.effect(() => register(buildUnpackTool({ store: artifacts })), 'dsh-rea: unpack tool');
   // The fallback for `verify` when no analyzer can start: it reads the file
   // the report describes, so an uninstalled engine no longer makes a correct
   // plan unscorable.
@@ -415,6 +481,7 @@ export async function apply(ctx, rawConfig = {}) {
         spill: (name, text) => artifacts.maybeSpill(name, text),
         guard: (name, args, schemaEntry) => guardTool(name, args, schemaEntry),
         limiter: readLimiter,
+        redactOutput: config.redactIdentity !== false,
         metadata: (name, result, text) => {
           const meta = snapshotMeta(name, result, text);
           void resultIndex.record(meta);
@@ -482,14 +549,17 @@ export async function apply(ctx, rawConfig = {}) {
   if (ctx.webServer?.register) {
     const routeDispose = mountEnvironmentRoutes(ctx, {
       status: statusPayload,
-      checkUpdate: () => checkForUpdate(log, { current: PLUGIN_VERSION, pinnedSha256: config.pinnedSha256, trustedManifestKey: config.trustedManifestKey }),
-      installUpdate: () => installUpdate(log, { pinnedSha256: config.pinnedSha256, maxBackups: config.maxBackups }),
+      // localizedMode is read off the live config object per call: the panel
+      // applies policy patches in place, so flipping the switch in the sidebar
+      // gates (or re-opens) these channels without a restart.
+      checkUpdate: () => checkForUpdate(log, { current: PLUGIN_VERSION, pinnedSha256: config.pinnedSha256, trustedManifestKey: config.trustedManifestKey, localizedMode: config.localizedMode }),
+      installUpdate: () => installUpdate(log, { pinnedSha256: config.pinnedSha256, maxBackups: config.maxBackups, localizedMode: config.localizedMode }),
       installGhidra: async () => {
-        const detected = await installGhidra(log);
+        const detected = await installGhidra(log, { localizedMode: config.localizedMode });
         applyGhidraEnvironment(detected);
         return detected;
       },
-      installTool: (tool) => installExternalTool(tool, log),
+      installTool: (tool) => installExternalTool(tool, log, { localizedMode: config.localizedMode }),
       saveConfig: async (body) => {
         const before = engineConfigSignature();
         const result = await saveEnginePaths(body);
