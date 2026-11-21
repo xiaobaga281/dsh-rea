@@ -80,8 +80,27 @@ test('triage recognises DEX, WASM and APK containers', () => {
 });
 
 test('triage reports anti-analysis markers and only recommends tools the server has', () => {
-  const bytes = Buffer.concat([Buffer.from('IsDebuggerPresent VMware GetTickCount '), Buffer.alloc(2048, 0x41)]);
-  const report = triageBuffer(bytes, { name: 'sample.bin', availableTools: new Set(['rea_status', 'open_binary']) });
+  // A minimal valid PE32: the anti-analysis question only makes sense on a
+  // recognised executable, and an unrecognised buffer now gets its own verdict.
+  const buffer = Buffer.alloc(0x400);
+  buffer.write('MZ', 0, 'latin1');
+  buffer.writeUInt32LE(0x80, 0x3c);
+  buffer.write('PE\0\0', 0x80, 'latin1');
+  buffer.writeUInt16LE(1, 0x86);
+  buffer.writeUInt16LE(0xe0, 0x94);
+  const opt = 0x98;
+  buffer.writeUInt16LE(0x10b, opt);
+  buffer.writeUInt32LE(0x1000, opt + 16);
+  buffer.writeUInt32LE(16, opt + 92);
+  const section = opt + 0xe0;
+  buffer.write('.text\0\0\0', section, 'latin1');
+  buffer.writeUInt32LE(0x200, section + 8);
+  buffer.writeUInt32LE(0x1000, section + 12);
+  buffer.writeUInt32LE(0x200, section + 16);
+  buffer.writeUInt32LE(0x200, section + 20);
+  buffer.writeUInt32LE(0x60000020, section + 36);
+  buffer.write('IsDebuggerPresent VMware GetTickCount ', 0x200, 'latin1');
+  const report = triageBuffer(buffer, { name: 'sample.bin', availableTools: new Set(['rea_status', 'open_binary']) });
   assert.ok(report.antiAnalysis.categories.includes('debugger-api'));
   assert.ok(report.antiAnalysis.categories.includes('cpu-hypervisor'));
   assert.match(report.nextSteps.join(' '), /rea_status/);

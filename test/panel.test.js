@@ -52,9 +52,14 @@ const status = {
     values: {
       allowedTargets: ['C:\\samples'],
       allowDeviceMutations: false,
+      allowSampleExecution: false,
+      sandboxSampleExecution: false,
       sensitiveArtifacts: false,
       artifactRetentionDays: 7,
       networkEgressPolicy: 'warn',
+      blockSampleEgress: true,
+      redactIdentity: true,
+      localizedMode: false,
     },
   },
 };
@@ -98,28 +103,50 @@ const renderScope = (overrides = {}) => client.__test.ScopePicker({
 test('the security section renders a control for every row it shows', () => {
   const tree = render();
   const rows = collect(tree, (node) => typeof node.props?.className === 'string' && node.props.className.includes('rea-policy-row'));
-  assert.equal(rows.length, 5, 'scope, devices, sensitive, retention, egress');
+  assert.equal(rows.length, 10, 'scope, devices, sensitive, retention, egress, localized, exec, sandbox, block-egress, redact');
   assert.equal(collect(tree, (node) => node.type === 'input').length, 1);
   assert.equal(collect(tree, (node) => node.type === 'select').length, 0, 'no native dropdown');
-  assert.equal(collect(tree, (node) => node.props?.role === 'switch').length, 2);
+  assert.equal(collect(tree, (node) => node.props?.role === 'switch').length, 7);
   assert.equal(collect(tree, (node) => node.props?.role === 'radiogroup').length, 1);
   // The scope is a picker, not a text field.
   assert.equal(collect(tree, (node) => node.type === 'textarea').length, 0);
 });
 
-test('the two switches report the value the person clicked, not the current one', () => {
+test('the switches report the value the person clicked, not the current one', () => {
   const seen = [];
   const tree = render({ setDraft: (next) => seen.push(next) });
   const switches = collect(tree, (node) => node.props?.role === 'switch');
-  switches[0].props.onClick();
-  switches[1].props.onClick();
-  assert.equal(seen.length, 2);
-  assert.equal(seen[0].allowDeviceMutations, true);
-  assert.equal(seen[1].sensitiveArtifacts, true);
-  // Each click starts from the same rendered draft, so the second one must not
-  // silently carry the first toggle's value.
-  assert.equal(seen[1].allowDeviceMutations, false);
+  // Order: exec, sandbox, block-egress, devices, sensitive, redact, localized.
+  switches[0].props.onClick(); // allowSampleExecution: false -> true
+  switches[3].props.onClick(); // allowDeviceMutations: false -> true
+  switches[5].props.onClick(); // redactIdentity: true -> false
+  assert.equal(seen.length, 3);
+  assert.equal(seen[0].allowSampleExecution, true, 'execution starts off and the click turns it on');
+  assert.equal(seen[1].allowDeviceMutations, true);
+  assert.equal(seen[2].redactIdentity, false, 'redaction starts on; the click relaxes it');
+  // Each click starts from the same rendered draft, so a later click must not
+  // silently carry an earlier toggle's value.
+  assert.equal(seen[1].allowSampleExecution, false);
+  assert.equal(seen[2].allowDeviceMutations, false);
   assert.equal(switches[0].props['aria-checked'], 'false');
+});
+
+test('the localized-mode switch shows its boundary hint only while it is on', () => {
+  const off = render();
+  assert.equal(collect(off, (node) => node.props?.className === 'rea-policy-note').length, 0);
+  const on = render({ draft: { ...status.policy.values, localizedMode: true } });
+  const notes = collect(on, (node) => node.props?.className === 'rea-policy-note').map((node) => node.children[0]);
+  assert.ok(notes.some((text) => String(text).includes('policyLocalizedHint')), 'the hint names the semantic boundary');
+});
+
+test('the ten policy rows are chunked into three titled groups', () => {
+  const tree = render();
+  const groups = collect(tree, (node) => node.props?.className === 'rea-policy-group');
+  assert.equal(groups.length, 3);
+  const titles = collect(tree, (node) => node.props?.className === 'rea-policy-group-title').map((node) => node.children[0]);
+  assert.deepEqual(titles, ['policyGroupExec', 'policyGroupTools', 'policyGroupPrivacy']);
+  const rowsInGroups = groups.map((group) => collect(group, (node) => node.props?.className === 'rea-policy-row').length);
+  assert.deepEqual(rowsInGroups, [4, 4, 2], 'exec 4 / tools 4 / privacy 2');
 });
 
 test('the toggles and save button are disabled while a request is in flight', () => {
