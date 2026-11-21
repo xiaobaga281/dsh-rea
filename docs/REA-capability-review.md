@@ -339,4 +339,4 @@ node <schema-probe>         # 导出 full / compact 两份 tools/list 快照
 | 干净对照 | 0 误报 | 0 误报 |
 | 测试 | 162/162 | **168/168** |
 
-**仍未解决**：真实编译产物（.NET 元数据、Go/Rust 字符串表、控制流平坦化）、加密配置需要多字节/RC4/AES 解密，delay-load 与 bound import 未解析，静态证据无法证明某个标识真的被回传。这些需要新引擎或动态轨迹，属于能力天花板，不假装已实现。
+**仍未解决**：真实编译产物（.NET 的 **CIL 级还原**——元数据清单级已由 `lib/managed.js` 补上（`rea_triage` 的 `structure.managed` 给出程序集/模块/类型/方法/资源清单），但 IL 逻辑还原仍需上游 `inspect_managed_*`；Go/Rust 字符串表、控制流平坦化）、加密配置需要多字节/RC4/AES 解密，delay-load 与 bound import 未解析，静态证据无法证明某个标识真的被回传。这些需要新引擎或动态轨迹，属于能力天花板，不假装已实现。
