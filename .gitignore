@@ -26,3 +26,6 @@ rea-ghidra-*/
 
 # First-party Ghidra project files (analysis output, not source)
 ghidra-work/
+
+# ZCode agent workspace (workflow drafts/runs) - harness-owned, not source
+.zcode/
