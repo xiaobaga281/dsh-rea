@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
-  applyPolicyPatch, describePolicy, normalizePolicyPatch, readPolicyOverrides, writePolicyOverrides,
+  applyPolicyPatch, describePolicy, normalizePolicyPatch, POLICY_DEFAULTS, readPolicyOverrides, writePolicyOverrides,
 } from '../lib/policy-store.js';
 import { resolveConfig } from '../lib/config.js';
 import { mountEnvironmentRoutes } from '../lib/routes.js';
@@ -118,9 +118,10 @@ test('the panel override beats the config row', () => {
   assert.equal(config.artifactRetentionDays, 30);
 });
 
-test('an override cannot reach fields outside the five', () => {
+test('an override cannot reach fields outside the policy keys', () => {
   // The override file is editable by hand; `enabled: false` there would take
-  // the plugin down without the panel ever showing a switch for it.
+  // the plugin down without the panel ever showing a switch for it. (Named
+  // "the five" until 1.10.0; POLICY_KEYS has grown, the boundary has not.)
   const config = resolveConfig({ enabled: true }, { enabled: false, toolCallTimeoutMs: 1, allowDeviceMutations: true });
   assert.equal(config.enabled, true);
   assert.notEqual(config.toolCallTimeoutMs, 1);
@@ -221,4 +222,23 @@ test('a policy write never restarts the analysis child', async () => {
   await server.routes.get('POST /rea/policy')(jsonRequest({ sensitiveArtifacts: true }), response);
   assert.equal(JSON.parse(response.state.body).restarted, false);
   assert.equal(restarted, 0);
+});
+
+test('the host-protection switches are panel-editable booleans that default on', () => {
+  assert.equal(POLICY_DEFAULTS.blockSampleEgress, true);
+  assert.equal(POLICY_DEFAULTS.redactIdentity, true);
+  const { patch } = normalizePolicyPatch({ blockSampleEgress: false, redactIdentity: false });
+  assert.equal(patch.blockSampleEgress, false);
+  assert.equal(patch.redactIdentity, false);
+  assert.throws(() => normalizePolicyPatch({ blockSampleEgress: 'yes' }), /blockSampleEgress must be true or false/);
+  // The config row resolves the same keys; absent means on.
+  const off = resolveConfig({}, { blockSampleEgress: false, redactIdentity: false });
+  assert.equal(off.blockSampleEgress, false);
+  assert.equal(off.redactIdentity, false);
+  const defaults = resolveConfig({}, null);
+  assert.equal(defaults.blockSampleEgress, true);
+  assert.equal(defaults.redactIdentity, true);
+  const described = describePolicy(defaults);
+  assert.equal(described.blockSampleEgress, true);
+  assert.equal(described.redactIdentity, true);
 });

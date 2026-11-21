@@ -53,6 +53,14 @@ test('block entropy reports the high-entropy ratio and block count', () => {
 test('known packer signatures are detected by byte content, not extension', () => {
   const matches = detectPackers(Buffer.from('MZ' + '\0'.repeat(100) + 'UPX0' + 'UPX1' + 'VMProtect'));
   assert.deepEqual(matches.map((item) => item.family), ['UPX', 'VMProtect']);
+  assert.ok(detectPackers(Buffer.from('MZ' + '\0'.repeat(100) + '.MPRESS1')).some((item) => item.family === 'MPRESS'));
+});
+
+test('the word COMPRESS is not an MPRESS signature', () => {
+  const genuine = Buffer.from('MZ' + '\0'.repeat(100) + 'COMPRESSED DATA' + '\0'.repeat(100));
+  assert.equal(detectPackers(genuine).length, 0);
+  const packed = Buffer.from('MZ' + '\0'.repeat(100) + '.MPRESS1\0' + '\0'.repeat(100));
+  assert.equal(detectPackers(packed)[0].family, 'MPRESS');
 });
 
 test('a plain file reports no packer', () => {

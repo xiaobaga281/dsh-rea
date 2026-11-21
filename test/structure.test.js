@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 
 import { buildGeneration } from '../scripts/duel/defender.mjs';
-import { readPeLayout, parseTlsCallbacks, findCodePointerTables, classifyCodePointerTables, structuralAnomalies, structureProfile } from '../lib/structure.js';
+import { readPeLayout, parseTlsCallbacks, findCodePointerTables, classifyCodePointerTables, structuralAnomalies, structureProfile, parsePeExports } from '../lib/structure.js';
 import { javaRequirement } from '../lib/engines.js';
 import { assessBehavior, planNextSteps } from '../lib/plan.js';
 import { triageBuffer } from '../lib/triage.js';
@@ -203,4 +204,33 @@ test('the report states the image base so a probe address can be computed', () =
   assert.ok(step, 'no machine-readable probe was emitted');
   assert.equal(step.probe.tool, 'inspect_address_context');
   assert.ok(Number.isInteger(step.probe.rva));
+});
+
+
+test('parsePeExports reads the real corpus export table (skip when the corpus is absent)', (t) => {
+  const corpus = new URL('../dist/corpus/sqlite3.dll', import.meta.url);
+  let bytes;
+  try {
+    bytes = readFileSync(corpus);
+  } catch {
+    t.skip('dist/corpus/sqlite3.dll not present (fetch-corpus not run)');
+    return;
+  }
+  const parsed = parsePeExports(bytes);
+  assert.equal(parsed.count, 361);
+  assert.equal(parsed.exports.length, 361);
+  // sqlite3_version is a data export pointing at the version string; its RVA
+  // is exercised by the parse validation in docs/reconstruction-plan.md §13.
+  const step = parsed.exports.find((entry) => entry.name === 'sqlite3_step');
+  assert.ok(step, 'sqlite3_step missing from the export table');
+  assert.equal(step.forwarded, false);
+  assert.ok(step.rva > 0x1000, `sqlite3_step rva sanity: ${step.rva}`);
+  for (const entry of parsed.exports.slice(0, 50)) {
+    assert.ok(entry.name.length > 0);
+  }
+});
+
+test('parsePeExports degrades on non-PE input instead of throwing', () => {
+  assert.deepEqual(parsePeExports(Buffer.from('not a pe'), {}), { exports: [], count: 0 });
+  assert.deepEqual(parsePeExports(Buffer.alloc(0)), { exports: [], count: 0 });
 });
