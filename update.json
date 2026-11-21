@@ -1,9 +1,9 @@
 {
-  "version": "1.9.0",
-  "tag": "v1.9.0",
-  "asset_url": "https://github.com/xiaobaga281/dsh-rea/releases/download/v1.9.0/dsh-rea-1.9.0.tgz",
-  "release_url": "https://github.com/xiaobaga281/dsh-rea/releases/tag/v1.9.0",
-  "sha256": "35fba9ff0cf0490325687ac3be1f3639ffb4d1dc3905dccf84a15f5bf32e4273",
-  "size": 30068077,
-  "published_at": "2026-11-07T08:41:27.037Z"
+  "version": "1.11.0",
+  "tag": "v1.11.0",
+  "asset_url": "https://github.com/xiaobaga281/dsh-rea/releases/download/v1.11.0/dsh-rea-1.11.0.tgz",
+  "release_url": "https://github.com/xiaobaga281/dsh-rea/releases/tag/v1.11.0",
+  "sha256": "7dac437f0f13a7538de2a9c42e8b999360a6ade960584b88fc5e03c3f5955587",
+  "size": 30366539,
+  "published_at": "2026-11-21T06:52:18.637Z"
 }
