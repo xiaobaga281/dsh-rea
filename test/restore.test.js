@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-import { buildReadiness } from '../lib/build.js';
-import { ghidraLocalReadiness } from '../lib/ghidra-local.js';
+import { buildReadiness } from '../lib/restore/build.js';
+import { ghidraLocalReadiness } from '../lib/restore/ghidra-local.js';
 
 /**
  * Function-level restoration gate, pinned end to end.

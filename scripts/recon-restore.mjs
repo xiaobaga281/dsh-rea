@@ -23,12 +23,12 @@ import { existsSync } from 'node:fs';
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 
-import { compileC } from '../lib/build.js';
-import { checkSemanticHypothesis, compareBuilds } from '../lib/compare.js';
-import { ghidraLocalReadiness, listFunctionsWithGhidra } from '../lib/ghidra-local.js';
-import { parsePEImports } from '../lib/intel.js';
-import { extractDeepStrings } from '../lib/strings.js';
-import { readPeLayout } from '../lib/structure.js';
+import { compileC } from '../lib/restore/build.js';
+import { checkSemanticHypothesis, compareBuilds } from '../lib/restore/compare.js';
+import { ghidraLocalReadiness, listFunctionsWithGhidra } from '../lib/restore/ghidra-local.js';
+import { parsePEImports } from '../lib/static/intel.js';
+import { extractDeepStrings } from '../lib/static/strings.js';
+import { readPeLayout } from '../lib/static/structure.js';
 
 const args = process.argv.slice(2);
 const target = args[0];

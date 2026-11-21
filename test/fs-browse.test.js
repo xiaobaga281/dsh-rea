@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 
-import { listDirectories } from '../lib/fs-browse.js';
-import { mountEnvironmentRoutes } from '../lib/routes.js';
+import { listDirectories } from '../lib/surface/fs-browse.js';
+import { mountEnvironmentRoutes } from '../lib/surface/routes.js';
 
 async function tree() {
   const root = await mkdtemp(join(tmpdir(), 'dsh-browse-'));

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { dynamicReadiness } from '../lib/dynamic.js';
-import { buildDynamicProbeTool } from '../lib/dynamic-tools.js';
+import { dynamicReadiness } from '../lib/dynamic/dynamic.js';
+import { buildDynamicProbeTool } from '../lib/surface/dynamic-tools.js';
 
 test('the dynamic probe refuses without the policy flag, before touching the target', async () => {
   const tool = buildDynamicProbeTool({ config: { allowSampleExecution: false } });

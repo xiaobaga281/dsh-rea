@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { UPDATE_STATE, installUpdate } from '../lib/update.js';
+import { UPDATE_STATE, installUpdate } from '../lib/infra/update.js';
 
 const writePackage = async (dir, version, marker) => {
   await mkdir(dir, { recursive: true });

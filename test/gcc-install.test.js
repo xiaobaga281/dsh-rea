@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { gzipSync } from 'node:zlib';
 
-import { detectGccAt, gccSpec, unpackGcc } from '../lib/engines.js';
+import { detectGccAt, gccSpec, unpackGcc } from '../lib/infra/engines.js';
 
 function tarHeader(name, size) {
   const header = Buffer.alloc(512);

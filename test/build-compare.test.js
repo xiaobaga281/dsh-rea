@@ -4,11 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { buildReadiness, compileC } from '../lib/build.js';
-import { buildInteractionTier, cfgSimilarity, classifyAgainstFunctionFloor, compareBuilds, floorFromSkeleton, functionFloorFromInventory, matchFunctionLists, measureToolchainFloor, normalizePseudocode, pseudocodeSimilarity, scoreFunctionLists, semanticSimilarity, sourceLiterals, splitByFunctionFloor, unionFunctionFloors } from '../lib/compare.js';
-import { ghidraLocalReadiness, parseFunctionList } from '../lib/ghidra-local.js';
-import { interactionContractFrom } from '../lib/interaction.js';
-import { buildCompareBuildTool } from '../lib/recon-tools.js';
+import { buildReadiness, compileC } from '../lib/restore/build.js';
+import { buildInteractionTier, cfgSimilarity, classifyAgainstFunctionFloor, compareBuilds, floorFromSkeleton, functionFloorFromInventory, matchFunctionLists, measureToolchainFloor, normalizePseudocode, pseudocodeSimilarity, scoreFunctionLists, semanticSimilarity, sourceLiterals, splitByFunctionFloor, unionFunctionFloors } from '../lib/restore/compare.js';
+import { ghidraLocalReadiness, parseFunctionList } from '../lib/restore/ghidra-local.js';
+import { interactionContractFrom } from '../lib/static/interaction.js';
+import { buildCompareBuildTool } from '../lib/surface/recon-tools.js';
 import { generateSpecimen } from '../scripts/recon/specimen.mjs';
 
 /** A minimal valid PE32 whose import table and strings are configurable. */

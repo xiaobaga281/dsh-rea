@@ -11,9 +11,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { entryAnomalies, imphashFromImports, peTimeStamp, recoverCodeView, richHeader } from '../lib/identity.js';
-import { buildCorrelateSamplesTool } from '../lib/analysis-tools.js';
-import { rvaToOffset } from '../lib/structure.js';
+import { entryAnomalies, imphashFromImports, peTimeStamp, recoverCodeView, richHeader } from '../lib/static/identity.js';
+import { buildCorrelateSamplesTool } from '../lib/surface/analysis-tools.js';
+import { rvaToOffset } from '../lib/static/structure.js';
 
 // ------------------------------------------------------------------ helpers --
 function pe({ sections = [], entryRva = 0x1000, imports = null } = {}) {

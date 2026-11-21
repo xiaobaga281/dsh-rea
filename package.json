@@ -1,7 +1,7 @@
 {
   "name": "dsh-rea",
   "version": "1.11.0",
-  "displayName": "逆向分析",
+  "displayName": "\u9006\u5411\u5206\u6790",
   "description": "Reverse-engineering tools for DeepSeek Harness: a deferred full-schema catalog, hardened path/trust boundaries, structured result index, trusted playbooks, local static triage with a measured decode ladder (repeating-key XOR, RC4, stack strings, API hashes), compressed-container and delta/interleave recovery, per-build watermark detection, an explicit honesty report for unopenable regions, evidence exports, environment sidebar, and redundant-mirror self-update.",
   "type": "module",
   "icon": "./icon.svg",
@@ -15,8 +15,8 @@
   "files": [
     "index.js",
     "client.js",
-    "lib/*.js",
-    "lib/*.mjs",
+    "lib/**/*.js",
+    "lib/**/*.mjs",
     "scripts/*.mjs",
     "scripts/*.ps1",
     "scripts/duel/*.mjs",
@@ -35,7 +35,7 @@
   ],
   "scripts": {
     "test": "node --test --test-concurrency=2",
-    "test:smoke": "node --test --test-concurrency=2 test/analysis-tools.test.js test/android.test.js test/artifacts.test.js test/autodraft.test.js test/behavior.test.js test/capability-hardening.test.js test/cil.test.js test/config.test.js test/detection-surface.test.js test/duel-score.test.js test/engine-health.test.js test/export.test.js test/framer.test.js test/fs-browse.test.js test/gcc-install.test.js test/hardening-150.test.js test/import-sources.test.js test/installer.test.js test/intel.test.js test/interaction.test.js test/ladder-160.test.js test/localized-mode.test.js test/naming.test.js test/panel.test.js test/policy.test.js test/precision-hardening.test.js test/probe.test.js test/red-team-regressions.test.js test/redact.test.js test/registry.test.js test/result-index.test.js test/routes.test.js test/salted-hash.test.js test/schema-cache.test.js test/senior-identity.test.js test/strings.test.js test/structure-audit.test.js test/structure.test.js test/tools.test.js test/triage.test.js test/update.test.js test/work-root.test.js test/workflow.test.js",
+    "test:smoke": "node --test --test-concurrency=2 test/analysis-tools.test.js test/architecture.test.js test/android.test.js test/artifacts.test.js test/autodraft.test.js test/behavior.test.js test/capability-hardening.test.js test/cil.test.js test/config.test.js test/detection-surface.test.js test/duel-score.test.js test/engine-health.test.js test/export.test.js test/framer.test.js test/fs-browse.test.js test/gcc-install.test.js test/hardening-150.test.js test/import-sources.test.js test/installer.test.js test/intel.test.js test/interaction.test.js test/ladder-160.test.js test/localized-mode.test.js test/naming.test.js test/panel.test.js test/policy.test.js test/precision-hardening.test.js test/probe.test.js test/red-team-regressions.test.js test/redact.test.js test/registry.test.js test/result-index.test.js test/routes.test.js test/salted-hash.test.js test/schema-cache.test.js test/senior-identity.test.js test/strings.test.js test/structure-audit.test.js test/structure.test.js test/tools.test.js test/triage.test.js test/update.test.js test/work-root.test.js test/workflow.test.js",
     "pack": "npm pack --pack-destination dist",
     "manifest": "node scripts/update-manifest.mjs",
     "structure": "node scripts/update-code-structure.mjs",

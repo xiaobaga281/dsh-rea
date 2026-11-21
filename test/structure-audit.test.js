@@ -4,11 +4,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { extractIocs, parsePEImports } from '../lib/intel.js';
-import { planNextSteps } from '../lib/plan.js';
-import { createResultIndex } from '../lib/result-index.js';
-import { triageBuffer } from '../lib/triage.js';
-import { buildQueryResultsTool } from '../lib/workflow-tools.js';
+import { extractIocs, parsePEImports } from '../lib/static/intel.js';
+import { planNextSteps } from '../lib/static/plan.js';
+import { createResultIndex } from '../lib/infra/result-index.js';
+import { triageBuffer } from '../lib/static/triage.js';
+import { buildQueryResultsTool } from '../lib/surface/workflow-tools.js';
 
 /**
  * One PE with two sections whose virtual ranges overlap: the first section

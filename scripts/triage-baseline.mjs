@@ -15,7 +15,7 @@
 import { readdir, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 
-import { triageBuffer, triageFile } from '../lib/triage.js';
+import { triageBuffer, triageFile } from '../lib/static/triage.js';
 
 function fakePE({ sectionName = '.text', virtualSize = 0x1000, rawSize = 0x1000 } = {}) {
   const bytes = Buffer.alloc(0x400);

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { applyRewrites, lowestSimilarityMismatch, repairDraft, runAutoRepairRounds, toAutoHistory } from '../lib/autodraft.js';
+import { applyRewrites, lowestSimilarityMismatch, repairDraft, runAutoRepairRounds, toAutoHistory } from '../lib/restore/autodraft.js';
 
 const draftSource = [
   'int helper(int x) { return x + 1; }',

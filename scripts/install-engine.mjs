@@ -2,7 +2,7 @@
  * Prepare one engine from the pinned release list, the same path the sidebar
  * uses. Run: node scripts/install-engine.mjs gcc
  */
-import { GCC_RELEASE, JADX_RELEASE, APKTOOL_RELEASE, WABT_RELEASE, ZIG_RELEASE, installExternalTool } from '../lib/engines.js';
+import { GCC_RELEASE, JADX_RELEASE, APKTOOL_RELEASE, WABT_RELEASE, ZIG_RELEASE, installExternalTool } from '../lib/infra/engines.js';
 
 const tool = (process.argv[2] ?? '').trim();
 const versions = { gcc: GCC_RELEASE, zig: ZIG_RELEASE, jadx: JADX_RELEASE, apktool: APKTOOL_RELEASE, wabt: WABT_RELEASE };

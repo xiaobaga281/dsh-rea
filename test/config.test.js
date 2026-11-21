@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { childEnvironment, resolveConfig } from '../lib/config.js';
-import { DEFAULT_MAX_BUFFER_BYTES, DEFAULT_TOOL_CALL_TIMEOUT_MS, REA_MIN_MAX_RESPONSE_BYTES } from '../lib/mcp-client.js';
+import { childEnvironment, resolveConfig } from '../lib/infra/config.js';
+import { DEFAULT_MAX_BUFFER_BYTES, DEFAULT_TOOL_CALL_TIMEOUT_MS, REA_MIN_MAX_RESPONSE_BYTES } from '../lib/surface/mcp-client.js';
 
 test('defaults match the documented configuration table', () => {
   const config = resolveConfig({});

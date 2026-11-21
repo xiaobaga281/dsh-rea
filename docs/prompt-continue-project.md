@@ -19,15 +19,15 @@
   - `npm run recon -- --behavior` → R0–R4 ceiling 100.0%，loop 全部 converged；`--baseline` 另有机械下限列。
 - 关键文档：`docs/reconstruction-plan.md`（§13 是实施状态、偏差、剩余任务，**先读**）、`README.md` 的「还原工程」节、`docs/duel.md`、`docs/hardening-ladder.md`。
 - 关键代码：
-  - `lib/recon.js`（循环状态、收敛/终态、gap、handoff、渲染）
-  - `lib/recon-tools.js`（`rea_reconstruct` / `rea_compare_build` 工具面与动作）
-  - `lib/compare.js`（T1/T2/T3/payload 分层、函数匹配、相似度）
-  - `lib/behavior.js`（T4 声明面：输出/状态/副作用）
-  - `lib/build.js` / `lib/baseline.js` / `lib/autodraft.js`（编译、机械基线、自动/模型改稿）
-  - `lib/dynamic.js` / `lib/dynamic-tools.js`（Frida 探针）
-  - `lib/trace.js` / `lib/trace-tools.js`（运行时轨迹）
-  - `lib/memdump.js` / `lib/memdump-tools.js`（内存镜像脱壳）
-  - `lib/observe.js` / `lib/observe-tools.js`（注册表/管道/服务/网络副作用）
+  - `lib/restore/recon.js`（循环状态、收敛/终态、gap、handoff、渲染）
+  - `lib/surface/recon-tools.js`（`rea_reconstruct` / `rea_compare_build` 工具面与动作）
+  - `lib/restore/compare.js`（T1/T2/T3/payload 分层、函数匹配、相似度）
+  - `lib/static/behavior.js`（T4 声明面：输出/状态/副作用）
+  - `lib/restore/build.js` / `lib/restore/baseline.js` / `lib/restore/autodraft.js`（编译、机械基线、自动/模型改稿）
+  - `lib/dynamic/dynamic.js` / `lib/surface/dynamic-tools.js`（Frida 探针）
+  - `lib/dynamic/trace.js` / `lib/surface/trace-tools.js`（运行时轨迹）
+  - `lib/dynamic/memdump.js` / `lib/surface/memdump-tools.js`（内存镜像脱壳）
+  - `lib/dynamic/observe.js` / `lib/surface/observe-tools.js`（注册表/管道/服务/网络副作用）
   - `scripts/dynamic/*.py`（Frida helper：probe/dump/observe）
 
 ### 1. 先读什么、先跑什么（按顺序，别跳）

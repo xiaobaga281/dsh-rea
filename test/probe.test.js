@@ -9,9 +9,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { buildProbeAddressTool } from '../lib/analysis-tools.js';
-import { describeVerdict, probeAddress } from '../lib/probe.js';
-import { planNextSteps } from '../lib/plan.js';
+import { buildProbeAddressTool } from '../lib/surface/analysis-tools.js';
+import { describeVerdict, probeAddress } from '../lib/dynamic/probe.js';
+import { planNextSteps } from '../lib/static/plan.js';
 import { scoreRow } from '../scripts/duel/score.mjs';
 import { buildGeneration } from '../scripts/duel/defender.mjs';
 

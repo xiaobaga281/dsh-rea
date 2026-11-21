@@ -4,10 +4,10 @@ import test from 'node:test';
 import {
   candidateKeys, cribDragKeys, findHighEntropyRegions, joinStackFragments, rc4Keystream,
   recoverBlobs,
-} from '../lib/crypto-recovery.js';
-import { HASH_ALGORITHMS, recoverHashedApis, resolveImports } from '../lib/api-hash.js';
-import { detectAttributionCanaries } from '../lib/intel.js';
-import { extractDeepStrings, channelSummary } from '../lib/strings.js';
+} from '../lib/static/crypto-recovery.js';
+import { HASH_ALGORITHMS, recoverHashedApis, resolveImports } from '../lib/static/api-hash.js';
+import { detectAttributionCanaries } from '../lib/static/intel.js';
+import { extractDeepStrings, channelSummary } from '../lib/static/strings.js';
 
 const xorRepeat = (text, key) => {
   const raw = Buffer.from(text, 'latin1');

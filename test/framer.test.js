@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { LineFramer } from '../lib/mcp-client.js';
+import { LineFramer } from '../lib/surface/mcp-client.js';
 
 function collect() {
   const lines = [];

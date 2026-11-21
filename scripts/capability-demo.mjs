@@ -20,9 +20,9 @@ const { apply } = await import(new URL('index.js', ROOT).href);
 const {
   antiAnalysisMatrix, capabilityProfile, extractIocs, parsePEImports,
   summarizeIocs, trackingSurface,
-} = await import(new URL('lib/intel.js', ROOT).href);
-const { extractStrings, xorProbe, triageBuffer } = await import(new URL('lib/triage.js', ROOT).href);
-const { extractDeepStrings, channelSummary } = await import(new URL('lib/strings.js', ROOT).href);
+} = await import(new URL('lib/static/intel.js', ROOT).href);
+const { extractStrings, xorProbe, triageBuffer } = await import(new URL('lib/static/triage.js', ROOT).href);
+const { extractDeepStrings, channelSummary } = await import(new URL('lib/static/strings.js', ROOT).href);
 
 if (!existsSync(join(OUT, 'tracked_app.exe'))) {
   await import(new URL('scripts/make-sample.mjs', ROOT).href);

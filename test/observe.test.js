@@ -4,10 +4,10 @@ import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { buildReadiness, compileC } from '../lib/build.js';
-import { dynamicReadiness } from '../lib/dynamic.js';
-import { compareEventSets, summarizeEvents } from '../lib/observe.js';
-import { buildSideEffectsTool } from '../lib/observe-tools.js';
+import { buildReadiness, compileC } from '../lib/restore/build.js';
+import { dynamicReadiness } from '../lib/dynamic/dynamic.js';
+import { compareEventSets, summarizeEvents } from '../lib/dynamic/observe.js';
+import { buildSideEffectsTool } from '../lib/surface/observe-tools.js';
 
 test('event sets are compared on recall and precision, and an empty pair is empty', () => {
   const comparison = compareEventSets(

@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildGeneration } from '../scripts/duel/defender.mjs';
-import { detectToolchain, identifyOverlay } from '../lib/installer.js';
-import { triageBuffer } from '../lib/triage.js';
+import { detectToolchain, identifyOverlay } from '../lib/infra/installer.js';
+import { triageBuffer } from '../lib/static/triage.js';
 
 test('an Inno Setup payload is named, with its version', () => {
   // Real case: a 28 MB installer whose overlay starts with "zlb\x1a". The

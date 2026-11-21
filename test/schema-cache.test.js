@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { annotationSummary, createSchemaCache, schemaAt, schemaOutline } from '../lib/schema-cache.js';
+import { annotationSummary, createSchemaCache, schemaAt, schemaOutline } from '../lib/infra/schema-cache.js';
 
 const FULL_TOOL = {
   name: 'compare_functions',

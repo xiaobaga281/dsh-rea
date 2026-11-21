@@ -3,8 +3,8 @@ import test from 'node:test';
 
 import {
   classifyEngineFailure, clearEngineHealth, engineHealth, providerFromError, recordEngineFailure, resetEngineHealth,
-} from '../lib/engine-health.js';
-import { planNextSteps } from '../lib/plan.js';
+} from '../lib/infra/engine-health.js';
+import { planNextSteps } from '../lib/static/plan.js';
 
 test('a JVM that cannot create its scratch directory is named as such', () => {
   // The real message is 1.5 KB of Java stack trace; the report needs the cause.

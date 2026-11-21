@@ -28,14 +28,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { createArtifactStore } from '../lib/artifacts.js';
-import { compileC } from '../lib/build.js';
-import { buildDynamicProbeTool } from '../lib/dynamic-tools.js';
-import { buildMemoryDumpTool } from '../lib/memdump-tools.js';
-import { buildSideEffectsTool } from '../lib/observe-tools.js';
-import { isSandboxHarnessFile, parseSandboxDiag, pidAliveWithName, SANDBOX_LAUNCHER, startSandboxed, windowsQuoteArgument } from '../lib/sandbox.js';
-import { runTrace } from '../lib/trace.js';
-import { buildTraceBehaviorTool } from '../lib/trace-tools.js';
+import { createArtifactStore } from '../lib/infra/artifacts.js';
+import { compileC } from '../lib/restore/build.js';
+import { buildDynamicProbeTool } from '../lib/surface/dynamic-tools.js';
+import { buildMemoryDumpTool } from '../lib/surface/memdump-tools.js';
+import { buildSideEffectsTool } from '../lib/surface/observe-tools.js';
+import { isSandboxHarnessFile, parseSandboxDiag, pidAliveWithName, SANDBOX_LAUNCHER, startSandboxed, windowsQuoteArgument } from '../lib/dynamic/sandbox.js';
+import { runTrace } from '../lib/dynamic/trace.js';
+import { buildTraceBehaviorTool } from '../lib/surface/trace-tools.js';
 
 const IS_WIN = process.platform === 'win32';
 

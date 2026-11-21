@@ -6,9 +6,9 @@ import test from 'node:test';
 
 import {
   applyPolicyPatch, describePolicy, normalizePolicyPatch, POLICY_DEFAULTS, readPolicyOverrides, writePolicyOverrides,
-} from '../lib/policy-store.js';
-import { resolveConfig } from '../lib/config.js';
-import { mountEnvironmentRoutes } from '../lib/routes.js';
+} from '../lib/infra/policy-store.js';
+import { resolveConfig } from '../lib/infra/config.js';
+import { mountEnvironmentRoutes } from '../lib/surface/routes.js';
 
 const scratch = async () => mkdtemp(join(tmpdir(), 'dsh-policy-'));
 

@@ -11,10 +11,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { decodeUserStringAt, disassembleIl, parseMethodBody } from '../lib/cil.js';
+import { decodeUserStringAt, disassembleIl, parseMethodBody } from '../lib/static/cil.js';
 
 test('the opcode table covers the documented set with unique values', async () => {
-  const { OPCODES } = await import('../lib/cil.js');
+  const { OPCODES } = await import('../lib/static/cil.js');
   assert.equal(OPCODES.get(0x00)?.name, 'nop');
   assert.equal(OPCODES.get(0x28)?.name, 'call');
   assert.equal(OPCODES.get(0x72)?.name, 'ldstr');

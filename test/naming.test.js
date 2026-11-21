@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { MAX_PUBLIC_NAME_LENGTH, publicToolName } from '../lib/tools.js';
+import { MAX_PUBLIC_NAME_LENGTH, publicToolName } from '../lib/surface/tools.js';
 
 test('prefixes a plain REA tool name', () => {
   assert.equal(publicToolName('binary_session'), 'mcp__rea__binary_session');

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildCatalogTool, buildStatusTool, buildTool, guidanceFor, RESULT_GUIDANCE, textOf } from '../lib/tools.js';
+import { buildCatalogTool, buildStatusTool, buildTool, guidanceFor, RESULT_GUIDANCE, textOf } from '../lib/surface/tools.js';
 
 function catalogOf(entries) {
   return { entries: () => entries };

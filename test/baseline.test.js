@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { buildBaseline, normalizeBody, parseSignature, synthesizeDraft } from '../lib/baseline.js';
-import { buildReadiness } from '../lib/build.js';
+import { buildBaseline, normalizeBody, parseSignature, synthesizeDraft } from '../lib/restore/baseline.js';
+import { buildReadiness } from '../lib/restore/build.js';
 
 test('normalizeBody maps the Ghidra type vocabulary and drops calling conventions', () => {
   const body = `int __cdecl main(void)

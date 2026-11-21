@@ -3,11 +3,11 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 
 import { buildGeneration } from '../scripts/duel/defender.mjs';
-import { readPeLayout, parseTlsCallbacks, findCodePointerTables, classifyCodePointerTables, structuralAnomalies, structureProfile, parsePeExports } from '../lib/structure.js';
-import { javaRequirement } from '../lib/engines.js';
-import { assessBehavior, planNextSteps } from '../lib/plan.js';
-import { triageBuffer } from '../lib/triage.js';
-import { HASH_ALGORITHMS, buildHashIndex, recoverHashedApis } from '../lib/api-hash.js';
+import { readPeLayout, parseTlsCallbacks, findCodePointerTables, classifyCodePointerTables, structuralAnomalies, structureProfile, parsePeExports } from '../lib/static/structure.js';
+import { javaRequirement } from '../lib/infra/engines.js';
+import { assessBehavior, planNextSteps } from '../lib/static/plan.js';
+import { triageBuffer } from '../lib/static/triage.js';
+import { HASH_ALGORITHMS, buildHashIndex, recoverHashedApis } from '../lib/static/api-hash.js';
 
 const D0 = buildGeneration('D0').buffer;
 const D6 = buildGeneration('D6').buffer;

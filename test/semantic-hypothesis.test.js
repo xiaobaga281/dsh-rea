@@ -5,13 +5,13 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 
-import { checkSemanticHypothesis, HYPOTHESIS_BOUNDARY, normalizeQuote } from '../lib/compare.js';
-import { ghidraLocalReadiness, listFunctionsWithGhidra } from '../lib/ghidra-local.js';
-import { parsePEImports } from '../lib/intel.js';
-import { createLoopState, recordIteration } from '../lib/recon.js';
-import { buildReconstructTool } from '../lib/recon-tools.js';
-import { extractDeepStrings } from '../lib/strings.js';
-import { readPeLayout } from '../lib/structure.js';
+import { checkSemanticHypothesis, HYPOTHESIS_BOUNDARY, normalizeQuote } from '../lib/restore/compare.js';
+import { ghidraLocalReadiness, listFunctionsWithGhidra } from '../lib/restore/ghidra-local.js';
+import { parsePEImports } from '../lib/static/intel.js';
+import { createLoopState, recordIteration } from '../lib/restore/recon.js';
+import { buildReconstructTool } from '../lib/surface/recon-tools.js';
+import { extractDeepStrings } from '../lib/static/strings.js';
+import { readPeLayout } from '../lib/static/structure.js';
 
 /**
  * Semantic attribution surface: a hypothesis = one-sentence claim + grep-able

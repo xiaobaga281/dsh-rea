@@ -19,12 +19,12 @@ import test from 'node:test';
 
 const ROOT = join(fileURLToPath(import.meta.url), '..', '..');
 
-// The reviewed smoke layer (43 files). The 12 live/heavy files stay out on
+// The reviewed smoke layer (44 files). The 12 live/heavy files stay out on
 // purpose (gcc fixtures, Frida helpers, subprocess-driven gates): baseline,
 // build-compare, dynamic, install, memdump, observe, recon, restore, sandbox,
 // semantic-hypothesis, trace, unpack.
 const SMOKE_FILES = [
-  'analysis-tools', 'android', 'artifacts', 'autodraft', 'behavior',
+  'analysis-tools', 'architecture', 'android', 'artifacts', 'autodraft', 'behavior',
   'capability-hardening', 'cil', 'config', 'detection-surface', 'duel-score',
   'engine-health', 'export', 'framer', 'fs-browse', 'gcc-install',
   'hardening-150', 'import-sources', 'installer', 'intel', 'interaction',

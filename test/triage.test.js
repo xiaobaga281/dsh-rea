@@ -7,7 +7,7 @@ import test from 'node:test';
 import {
   detectPackers, entropyProfile, extractStrings, identifyFormat, parsePE,
   shannonEntropy, triageBuffer, triageFile, xorProbe,
-} from '../lib/triage.js';
+} from '../lib/static/triage.js';
 
 /** A minimal but structurally valid PE32 with an UPX0 section. */
 function fakePE({ sectionName = '.text', virtualSize = 0x1000, rawSize = 0x200, entryInSection = true } = {}) {
