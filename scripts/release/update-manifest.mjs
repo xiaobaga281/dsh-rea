@@ -30,7 +30,7 @@ const manifest = {
   version: pkg.version,
   tag: `v${pkg.version}`,
   asset_url: `https://registry.npmjs.org/${pkg.name}/-/${pkg.name}-${pkg.version}.tgz`,
-  release_url: `https://github.com/xiaobaga281/dsh-rea/releases/tag/v${pkg.version}`,
+  release_url: `https://github.com/xiaobaga281/dsh-rea-restore/releases/tag/v${pkg.version}`,
   sha256: digest,
   size,
   published_at: new Date().toISOString(),
@@ -49,3 +49,4 @@ if (keyPath) {
     ? `update.json.minisig -> ${outcome.signaturePath} (publish it as a release asset)`
     : `signature skipped: ${outcome.reason}`);
 }
+

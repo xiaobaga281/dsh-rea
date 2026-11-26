@@ -2,7 +2,7 @@
 
 REA（[github.com/morluto/rea](https://github.com/morluto/rea)，npm 包 `rea-agents`，MIT 许可）的 DeepSeek Harness 插件。
 
-本插件以 npm 包 **`dsh-rea-restore`** 发布（逆向分析 + 复刻/还原）；源码仓库与 Releases 仍为 [`xiaobaga281/dsh-rea`](https://github.com/xiaobaga281/dsh-rea)。
+本插件以 npm 包 **`dsh-rea-restore`** 发布（逆向分析 + 复刻/还原）；源码仓库与 Releases 为 [`xiaobaga281/dsh-rea-restore`](https://github.com/xiaobaga281/dsh-rea-restore)。
 
 ## 免责声明
 
@@ -187,7 +187,7 @@ T5 交互面（`rea_compare_build` / `rea_reconstruct advance` 的 `interaction=
 
 | # | 通道 | 触发方式 | URL / 主机 | 请求头 | 是否含用户标识 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 更新元数据（`lib/infra/update.js` `fetchLatest`） | 侧栏「检查更新」按钮（POST `/rea/update/check`），无定时自动检查 | `api.github.com/repos/xiaobaga281/dsh-rea/releases/latest` → `cdn.jsdelivr.net` / `raw.githubusercontent.com` 的 `update.json`（配签名钥时另取 `.minisig`） | `user-agent: dsh-rea-restore`、`accept: application/json, text/plain, */*`（download.js:266） | 头与 URL 均不含主机名/账号/用户路径/序列号。固有标识只剩**源 IP 与 TLS SNI**，插件无法消除，如实列为能力边界 |
+| 1 | 更新元数据（`lib/infra/update.js` `fetchLatest`） | 侧栏「检查更新」按钮（POST `/rea/update/check`），无定时自动检查 | `api.github.com/repos/xiaobaga281/dsh-rea-restore/releases/latest` → `cdn.jsdelivr.net` / `raw.githubusercontent.com` 的 `update.json`（配签名钥时另取 `.minisig`） | `user-agent: dsh-rea-restore`、`accept: application/json, text/plain, */*`（download.js:266） | 头与 URL 均不含主机名/账号/用户路径/序列号。固有标识只剩**源 IP 与 TLS SNI**，插件无法消除，如实列为能力边界 |
 | 2 | 更新字节（`installUpdate`） | 侧栏「下载并安装」（用户点击） | GitHub release asset，镜像前缀 `ghproxy.net` / `gh-proxy.com` / `ghfast.top` / `hub.gitmirror.com` / `github.moeyy.xyz`（先 GitHub 直连） | `user-agent: dsh-rea-restore`、`accept: */*`（download.js:174） | 同上 |
 | 3 | 引擎下载（`lib/infra/engines.js`） | 侧栏准备按钮或 `npm run engine <tool>`（用户显式触发） | Ghidra 12.1.4 / JADX 0.7.1 / Apktool 3.0.3 / WABT 1.0.42 / WinLibs GCC：各 GitHub release；zig 0.17.0：`registry.npmjs.org` 双包。URL 均为源内钉死的字面量 + SHA-256 校验 | 同 fetchToFile | 同上 |
 | 4 | CONNECT 隧道 | 仅当用户配置了 `HTTPS_PROXY`/`HTTP_PROXY` | 发往**用户自己的代理**：`host: <目标 authority>`，仅当代理 URL 带 userinfo 时加 `proxy-authorization: Basic`；隧道内层对目标站重建 GET 用同样的 UA/accept | 凭证只到代理、不到目标站；错误文本已剥离 userinfo（见上） |
@@ -358,7 +358,7 @@ npm run release-gate       # 全部门禁 + pack + manifest 反校
 
 包内含 `index.js`、`client.js`、`lib/**/*.js` 与 `lib/surface/*.mjs`、`scripts/**/*.mjs`、`scripts/**/*.ps1`、`scripts/dynamic/*.py`、`scripts/ghidra/*`、`docs/*.md`、`cordis.patch.yml`、`locale/`、`icon.svg`、`README.md`、`LICENSE`，以及 `vendor/rea-runtime.tgz`（28 MB，136 个包的完整依赖闭包）与它的 SHA-256。`scripts/` 必须在包内：Ghidra 探针、Frida helper、沙箱与还原门禁都从它启动。`test/`、`dist/`、`.tools/`、`ghidra-work/` 与 `docs/internal/` 不进发布包。
 
-源码仓库：<https://github.com/xiaobaga281/dsh-rea>
+源码仓库：<https://github.com/xiaobaga281/dsh-rea-restore>
 
 ## 已知边界
 
@@ -390,3 +390,4 @@ npm run release-gate       # 全部门禁 + pack + manifest 反校
 ### 检测面与静默姿态
 
 每条目标执行/观测路径的「目标侧能观测到什么」按 [`docs/detection-surface.md`](docs/detection-surface.md) 矩阵逐格入档（每格带 file:line 与证据等级：[代码] / [实测引用] / [分析，未实测]）：基线行三种形态（本地静态层 / Ghidra 引擎档 / `rea_unpack` 文件变换）目标零执行即目标侧零检测面；动态五行覆盖 `rea_trace_behavior`（裸 spawn 与 sandbox 两档）、`rea_dynamic_probe`、`rea_memory_dump`、`rea_side_effects`，六列为进程存在/被注入/被调试通道/环境异样/令牌特殊/行为差异；DS-5 单列宿主侧痕迹（powershell/icacls/CheckNetIsolation/Ghidra JVM/upx/python-Frida——目标侧看不见、宿主 EDR 可见）防混淆。**边界声明**：本插件不做主动规避反逆向/反调试机制的工具（隐藏调试器、patch 反调试检查、绕过授权/DRM 属于绕过保护措施，不在本插件能力内）；「静默」的实现方式 = 静态优先 + 最小侵入 + 检测面如实入档，不是对目标反逆向机制的对抗。sandbox 档对「静默」是**更显眼**而非更隐蔽（令牌/网络/桌面都是样本可感知的硬异常），它的价值是宿主防护，两个维度正交。内核驱动、侧信道、容器内提权、VMProtect 类强壳仍是盲区；矩阵中标注 [分析，未实测] 的格子（如反调试 API 通道不触发）是机制推断，不冒充已验证。
+

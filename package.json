@@ -79,11 +79,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/xiaobaga281/dsh-rea.git"
+    "url": "git+https://github.com/xiaobaga281/dsh-rea-restore.git"
   },
-  "homepage": "https://github.com/xiaobaga281/dsh-rea#readme",
+  "homepage": "https://github.com/xiaobaga281/dsh-rea-restore#readme",
   "bugs": {
-    "url": "https://github.com/xiaobaga281/dsh-rea/issues"
+    "url": "https://github.com/xiaobaga281/dsh-rea-restore/issues"
   },
   "author": "xiaobaga281",
   "engines": {

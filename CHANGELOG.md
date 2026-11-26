@@ -1,6 +1,6 @@
 # 更新日志
 
-格式参照 Keep a Changelog；版本号与 [Releases](https://github.com/xiaobaga281/dsh-rea/releases) 一致。
+格式参照 Keep a Changelog；版本号与 [Releases](https://github.com/xiaobaga281/dsh-rea-restore/releases) 一致。
 
 ## [1.11.1] — 2026-11-27
 
@@ -12,7 +12,7 @@
 
 ### Changed
 
-- **插件更名与 npm 发布**：包名改为 `dsh-rea-restore`（npm 上 `dsh-rea` 属他人），同步 client id / `PLUGIN_ID` / locale `NS`、`cordis.patch.yml` 行名、下载 UA、MCP `clientInfo`、`rea_doctor` 报告行、SARIF `toolName` 与属性命名空间、README 安装与发布路径、release 脚本归档名；GitHub 仓库与 Releases 仍是 `xiaobaga281/dsh-rea`。首个 npm 公开版本为 `1.11.0`，随后同内容的 `1.11.1` 上线并成为 `latest`。
+- **插件更名与 npm 发布**：包名改为 `dsh-rea-restore`（npm 上 `dsh-rea` 属他人），同步 client id / `PLUGIN_ID` / locale `NS`、`cordis.patch.yml` 行名、下载 UA、MCP `clientInfo`、`rea_doctor` 报告行、SARIF `toolName` 与属性命名空间、README 安装与发布路径、release 脚本归档名；GitHub 仓库与 Releases 已同步更名为 `xiaobaga281/dsh-rea-restore`。首个 npm 公开版本为 `1.11.0`，随后同内容的 `1.11.1` 上线并成为 `latest`。
 - **死代码清理**：删除 4 个零引用导出（`dumpHelperPath`、`observerHelperPath`、`sandboxReadiness`、`extractInteractionSurface`）与 4 个文件内死符号（`TOKEN_KIND_BY_OPERAND`、`REGISTER_CLASS`、`T_TYPESPEC`、`xorKeyToText`）；49 个仅本文件使用的 `export` 收回为私有声明；移除 13 处未使用导入（含 client 端未使用的 `react/jsx-runtime`）与 `index.js` 末尾无人引用的再导出；拆分 `index.js` 中合并的 import；`interaction.js` 删除仅为占位的 `floorStrings` 参数与 `void` 语句。
 - **发布面与规范**：`package.json` 增补 `main: index.js` 与 `./cordis.patch.yml` 导出，描述改为中文并点明“逆向分析 + 复刻”；`scripts/release/*` 改为按 `pkg.name` 生成归档名，`npm run pack` 后由 `npm run manifest` 重新绑定 SHA-256/size；删除空的 `baseline-tests.log` 与 `.zcode/` 工作草稿目录（两者均不进发布包）。
 - **README 瘦身**：主文档从 1167 行收到 392 行，只保留免责声明、能力、安装、配置、安全边界、代码结构、测试与发布；1.4.0–1.8.10 的历次实现记录与旧版实测数据迁到 `docs/history.md`，代码引用仍由 `doc-references` 门禁校验。
@@ -91,3 +91,4 @@
 
 - `npm test`（`--test-concurrency=2`）：**470 项全绿**（pass 470 / fail 0 / skipped 0，实测 307 s，2026-11-19），含本轮新增的自动改稿批量回退 11 项（7 场景 + null 等价性 + 序列化契约）。
 - `npm run host-matrix`：三种宿主模式 PASS，tools=237 / routes=8 / bridged=207 / readOnly=157 / mutating=50 / destructive=4 / ownTools=30；结构门禁（模块可达 / scripts 存在 / confirm 映射 / README 生成块）OK。
+
