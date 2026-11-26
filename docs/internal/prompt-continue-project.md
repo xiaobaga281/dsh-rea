@@ -1,7 +1,7 @@
 # 交接提示词：继续完善 dsh-rea（DSH 逆向复刻插件）
 
 > 用法：把下面「交接提示词」整段发给另一个编码 Agent。它自带项目坐标、现状、门禁、剩余任务与验收口径，不需要再补上下文。
-> 生成时间：2026-11-16；对应工作树：`D:\5\新建文件夹\plugins\dsh-rea`（1.9.0，未提交改动较多）。
+> 生成时间：2026-11-16，2026-11-24 更新；对应工作树：`D:\5\新建文件夹\plugins\dsh-rea`（1.11.0，未提交改动较多）。
 
 ---
 
@@ -12,9 +12,9 @@
 ### 0. 项目坐标（先确认，不要猜）
 
 - 根目录：`D:\5\新建文件夹\plugins\dsh-rea`（Windows，Git Bash；路径含中文，构建参数已用相对名规避 GNU ld 写坏中文路径的问题）。
-- 版本：`package.json` 1.9.0；工作树有大量未提交改动。**不要** `git reset --hard`、`git checkout --`、`git clean`，也不要删 `.workbuddy`、`dist`、`.tools`。
+- 版本：`package.json` 1.11.0；工作树有大量未提交改动。**不要** `git reset --hard`、`git checkout --`、`git clean`，也不要删 `.workbuddy`、`dist`、`.tools`。
 - 当前门禁事实（你接手时应先复现，若数字不同先查清原因）：
-  - `npm test` → **419 项全绿**（脚本已固定 `--test-concurrency=2`；默认无上限并发在本机会因 gcc 进程风暴偶发挂起）。
+  - `npm test` → 完整门禁（脚本固定 `--test-concurrency=1`；Ghidra project 是进程级独占，默认串行是正确性约束）。2026-11-24 布局迁移后实测 **660 项：655 通过 / 5 跳过 / 0 失败**。
   - `npm run host-matrix` → 三模式 PASS，结构门禁 OK，`tools=237 routes=8 readOnly=157 mutating=50 destructive=4`。
   - `npm run recon -- --behavior` → R0–R4 ceiling 100.0%，loop 全部 converged；`--baseline` 另有机械下限列。
 - 关键文档：`docs/reconstruction-plan.md`（§13 是实施状态、偏差、剩余任务，**先读**）、`README.md` 的「还原工程」节、`docs/duel.md`、`docs/hardening-ladder.md`。
@@ -90,7 +90,7 @@
 - **路径与守卫**：自有工具统一走 `ownGuard`；新增工具必须能通过 `allowedTargets` 作用域测试（参考 host-matrix 对 `rea_compare_build` / `rea_reconstruct` 的检查）。
 - **执行门禁**：任何执行样本的路径必须 `allowSampleExecution: true` + 每次 `confirm: true`；工具描述必须写「会真的执行、无沙箱」。没有授权时只读字节。
 - **非 ASCII 路径**：编译参数用相对名（cwd 为工作目录），不要改回绝对路径；否则 GNU ld 会写坏中文路径。
-- **并发**：`package.json` 的 `test` 脚本保持 `--test-concurrency=2`；不要改回默认无上限。
+- **并发**：`package.json` 的 `test` 脚本保持 `--test-concurrency=1`；Ghidra project 是进程级独占，不要改回无上限并发。
 
 ### 5. 诚实边界（这个项目的生命线）
 

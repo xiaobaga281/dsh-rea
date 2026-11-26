@@ -58,7 +58,7 @@ test('the test:smoke manifest lists exactly the reviewed pure-JS layer', async (
   for (const heavy of HEAVY_FILES) {
     assert.ok(!listed.includes(heavy), `live/heavy test ${heavy} must not join the smoke layer`);
   }
-  assert.equal(pkg.scripts.test, 'node --test --test-concurrency=2', 'the full-suite script must stay untouched');
+  assert.equal(pkg.scripts.test, 'node --test --test-concurrency=1', 'the full suite must serialize Ghidra project access');
 });
 
 test('every smoke file stays pure JS: no gcc, no Frida, no subprocess, no real socket', async () => {

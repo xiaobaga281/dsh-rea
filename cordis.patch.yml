@@ -1,4 +1,4 @@
-# dsh-rea - one Host row.
+# dsh-rea-restore - one Host row.
 #
 # REA (github.com/morluto/rea, npm package rea-agents, MIT) is bridged into the
 # Harness by this package's own Host entry: on first activation the compressed
@@ -9,5 +9,5 @@
 
 - insert:
     - id: rea
-      name: 'dsh-rea'
+      name: 'dsh-rea-restore'
       config: {}

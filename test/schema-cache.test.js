@@ -69,6 +69,24 @@ test('the cache serves compact outlines by default and expands one path at a tim
   assert.match(cache.describe('compare_functions', { path: 'nope' }), /No field at path/);
 });
 
+test('a fresh catalog removes names that the child no longer advertises', () => {
+  const cache = createSchemaCache();
+  cache.prime([{ name: 'a', inputSchema: {} }, { name: 'b', inputSchema: {} }], '1.0.0');
+  cache.primeFull([{ ...FULL_TOOL, name: 'a' }, { ...FULL_TOOL, name: 'b' }], '1.0.0');
+  assert.equal(cache.fullCount, 2);
+
+  cache.prime([{ name: 'a', inputSchema: {} }], '1.0.0');
+  assert.equal(cache.compactCount, 1);
+  assert.equal(cache.fullCount, 1, 'a removed live tool cannot survive through the old full map');
+  assert.equal(cache.entry('b'), null);
+
+  cache.primeFull([{ ...FULL_TOOL, name: 'a' }, { ...FULL_TOOL, name: 'c' }], '1.1.0');
+  assert.equal(cache.fullCount, 2);
+  assert.equal(cache.hasFull('b'), false);
+  assert.equal(cache.hasFull('c'), true);
+  assert.equal(cache.versionConsistent, false);
+});
+
 test('output schema is opt-in and a failed probe degrades instead of throwing', () => {
   const cache = createSchemaCache();
   cache.prime([{ name: 'x', inputSchema: {} }]);

@@ -86,7 +86,7 @@ PID handoff: the child PID is written to -OutPid (one decimal number) and the
 python) can attach Frida to the child and resume its main thread.
 
 Usage:
-  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rea-sandbox.ps1 `
+  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/runtime/rea-sandbox.ps1 `
     -Executable <path> [-Arguments "args"] [-WorkDir <dir>] [-OutPid <file>] `
     [-DiagFile <file>] [-TimeoutMs <ms>] [-Suspend] [-NoMask] [-NoContainer] [-Desktop]
 

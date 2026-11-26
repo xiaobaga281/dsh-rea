@@ -64,9 +64,9 @@ test('SARIF is valid 2.1.0 with one result per unknown and evidence as rules', (
   assert.equal(sarif.runs[0].results.length, 2);
   assert.equal(sarif.runs[0].results[0].level, 'error');
   assert.equal(sarif.runs[0].results[1].level, 'note');
-  assert.equal(sarif.runs[0].tool.driver.rules.filter((rule) => rule.properties?.['dsh-rea/evidence-id']).length, 2);
+  assert.equal(sarif.runs[0].tool.driver.rules.filter((rule) => rule.properties?.['dsh-rea-restore/evidence-id']).length, 2);
   assert.match(sarif.runs[0].results[0].message.text, /dynamic-trace/);
-  assert.equal(sarif.runs[0].properties['dsh-rea/evidence-count'], 2);
+  assert.equal(sarif.runs[0].properties['dsh-rea-restore/evidence-count'], 2);
 });
 
 test('renderReports produces both artifacts with a trailing newline', () => {

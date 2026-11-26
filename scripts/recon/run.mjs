@@ -8,9 +8,9 @@
  *   mutation  compile a sibling source with one literal and one API changed.
  *             The score must drop and the gaps must name what changed; a
  *             scorer that stays green here measures nothing.
- *   loop      run the state machine with the truth draft. R0–R5 must converge;
- *             R4 additionally must report that its sealed values are not in
- *             the file, and the sealed plaintext must not appear in the target.
+ *   loop      run the state machine with the truth draft. R0/R3/R5 converge;
+ *             R1/R2 block because the source declares no string constants, and
+ *             R4 is statically unreachable because its sealed values are absent.
  *   hash      R3 additionally checks that the API-hash table recovers the truth
  *             names through the existing local channel.
  *   interaction R5 with --interaction: the window/message/control/resource
@@ -26,16 +26,16 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
-import { recoverHashedApis } from '../lib/static/api-hash.js';
-import { buildReadiness, compileC } from '../lib/restore/build.js';
-import { buildBaseline, synthesizeDraft } from '../lib/restore/baseline.js';
-import { compareBuilds, floorFromSkeleton, functionFloorFromInventory, measureToolchainFloor, unionFunctionFloors } from '../lib/restore/compare.js';
-import { decompileWithGhidra, ghidraLocalReadiness, listFunctionsWithGhidra } from '../lib/restore/ghidra-local.js';
-import { parsePEImports } from '../lib/static/intel.js';
-import { createLoopState, recordIteration } from '../lib/restore/recon.js';
-import { readPeLayout } from '../lib/static/structure.js';
-import { extractStrings, triageBuffer } from '../lib/static/triage.js';
-import { TIERS, generateSpecimen } from './recon/specimen.mjs';
+import { recoverHashedApis } from '../../lib/static/api-hash.js';
+import { buildReadiness, compileC } from '../../lib/restore/build.js';
+import { buildBaseline, synthesizeDraft } from '../../lib/restore/baseline.js';
+import { compareBuilds, floorFromSkeleton, functionFloorFromInventory, measureToolchainFloor, unionFunctionFloors } from '../../lib/restore/compare.js';
+import { decompileWithGhidra, ghidraLocalReadiness, listFunctionsWithGhidra } from '../../lib/restore/ghidra-local.js';
+import { parsePEImports } from '../../lib/static/intel.js';
+import { createLoopState, recordIteration } from '../../lib/restore/recon.js';
+import { readPeLayout } from '../../lib/static/structure.js';
+import { extractStrings, packingControl, triageBuffer } from '../../lib/static/triage.js';
+import { TIERS, generateSpecimen } from './specimen.mjs';
 
 const out = resolve(process.argv.includes('--out') ? process.argv[process.argv.indexOf('--out') + 1] : join('dist', 'recon'));
 mkdirSync(out, { recursive: true });
@@ -72,14 +72,52 @@ const pct = (value) => (typeof value === 'number' ? `${(value * 100).toFixed(1)}
 // is stated rather than turned into a number.
 const corpusAt = process.argv.indexOf('--corpus');
 if (corpusAt !== -1) {
-  const directory = resolve(process.argv[corpusAt + 1] ?? join('dist', 'corpus'));
-  const entries = (await readdir(directory).catch(() => [])).filter((name) => /\.(?:exe|dll)$/i.test(name)).slice(0, 10);
+  const corpusPath = process.argv[corpusAt + 1];
+  const releaseGate = process.argv.includes('--gate');
+  if (!corpusPath || corpusPath.startsWith('--')) {
+    console.error('recon --corpus needs a directory or manifest path');
+    process.exit(2);
+  }
+  if (/\.json$/i.test(corpusPath)) {
+    if (!releaseGate) {
+      console.error('a restore manifest is a release gate; pass --gate explicitly');
+      process.exit(2);
+    }
+    const { runManifest } = await import('./recon-restore.mjs');
+    process.exit(await runManifest(corpusPath, process.argv.slice(2)));
+  }
+  if (releaseGate) {
+    console.error('--gate needs a restore manifest JSON, not an inventory directory');
+    process.exit(2);
+  }
+  const directory = resolve(corpusPath);
+  const discovered = (await readdir(directory).catch(() => [])).filter((name) => /\.(?:exe|dll)$/i.test(name));
+  const entries = discovered.slice(0, 10);
+  const omittedByCap = discovered.slice(10);
   if (entries.length === 0) {
     console.error(`recon --corpus: no .exe/.dll files under ${directory}; run npm run fetch-corpus first`);
     process.exit(2);
   }
+  const entryInfo = new Map();
+  const invalidEntries = [];
+  for (const name of entries) {
+    const path = join(directory, name);
+    const info = await stat(path).catch(() => null);
+    if (!info?.isFile()) invalidEntries.push(`${name} is not a regular file`);
+    else entryInfo.set(name, info);
+  }
+  if (invalidEntries.length > 0) {
+    for (const failure of invalidEntries) console.log(`FAIL ${failure}`);
+    process.exit(1);
+  }
+  if (omittedByCap.length > 0) {
+    console.log(`note: corpus inventory is capped at 10 files; omitted ${omittedByCap.length}: ${omittedByCap.join(', ')}`);
+  }
   const engine = await ghidraLocalReadiness();
   const builder = await buildReadiness();
+  const failures = [];
+  if (!engine.ready) failures.push(`Ghidra unavailable: ${engine.reason}`);
+  if (wantBaseline && !builder.ready) failures.push(`build engine unavailable: ${builder.reason}`);
   const floorBuild = builder.ready
     ? await measureToolchainFloor({ workDir: join(out, 'corpus-floor'), listFunctions: deductFunctions })
     : { floor: null, reason: builder.reason };
@@ -87,9 +125,14 @@ if (corpusAt !== -1) {
   const rows = [];
   for (const name of entries) {
     const path = join(directory, name);
-    const info = await stat(path).catch(() => null);
-    if (!info?.isFile()) continue;
-    const buffer = await readFile(path);
+    let buffer;
+    try {
+      buffer = await readFile(path);
+    } catch (error) {
+      failures.push(`${name}: target became unreadable (${error?.message ?? error})`);
+      rows.push({ name, size: entryInfo.get(name)?.size ?? null, error: `target unreadable: ${error?.message ?? error}` });
+      continue;
+    }
     const triage = triageBuffer(buffer, { name });
     const layout = readPeLayout(buffer);
     const imports = parsePEImports(buffer);
@@ -110,6 +153,7 @@ if (corpusAt !== -1) {
         };
       } else {
         const decompiled = await decompileWithGhidra(path, { rva: layout.entryRva, timeoutMs: 300_000 });
+        failures.push(`${name}: complete inventory failed (${listed.reason ?? listed.code})`);
         inventory = decompiled.ok
           ? { ok: true, scope: 'entry', function: decompiled.function ?? null, lines: decompiled.code.split(/\r?\n/).length, fallbackReason: listed.reason ?? listed.code }
           : { ok: false, reason: decompiled.reason ?? decompiled.code };
@@ -128,12 +172,14 @@ if (corpusAt !== -1) {
       const stubDraft = synthesizeDraft(listed.functions, { stubbed: new Set(listed.functions.map((item) => item.name)) });
       const stubBuild = await compileC({ sourceText: stubDraft.source, workDir: join(out, 'corpus-floor', name), name: 'stub-floor' });
       if (stubBuild.ok) fileFloor = floorFromSkeleton(await readFile(stubBuild.outPath));
+      else failures.push(`${name}: stub-floor compilation failed (${stubBuild.reason})`);
       const built = await buildBaseline({
         functions: listed.functions,
         workDir: join(out, 'corpus-baseline', name.replace(/[^A-Za-z0-9._-]/g, '_')),
         name: 'baseline',
       });
       if (!built.ok) {
+        failures.push(`${name}: baseline compilation failed (${built.reason})`);
         baseline = { ok: false, reason: built.reason };
       } else {
         try {
@@ -168,6 +214,7 @@ if (corpusAt !== -1) {
             t2Deducted: comparison.tiers.t2.deductedTotal ?? null,
           };
         } catch (error) {
+          failures.push(`${name}: baseline comparison failed (${error?.message ?? error})`);
           baseline = { ok: false, reason: `comparison failed: ${error?.message ?? error}` };
         }
       }
@@ -183,6 +230,7 @@ if (corpusAt !== -1) {
       name,
       size: buffer.length,
       verdict: triage.verdict,
+      packingControl: /putty/i.test(name) ? packingControl(triage.packers) : null,
       imports: imports?.apiFlat?.length ?? 0,
       strings: extractStrings(buffer, { minLength: 6, maxStrings: 4_000 }).length,
       unresolved: triage.unresolved.length,
@@ -196,8 +244,9 @@ if (corpusAt !== -1) {
       intake: state.intake.note,
     });
   }
-  writeFileSync(join(out, 'recon-corpus.json'), `${JSON.stringify({ generatedAt: new Date().toISOString(), engine, builder, floor: floorBuild.reason, rows }, null, 2)}\n`);
-  console.log(`real-sample review (${entries.length} file(s), engine ${engine.ready ? 'ready' : `blocked: ${engine.reason}`}, builder ${builder.ready ? builder.compiler : `blocked: ${builder.reason}`})`);
+  if (rows.length !== entries.length) failures.push(`corpus row coverage ${rows.length}/${entries.length} is incomplete`);
+  writeFileSync(join(out, 'recon-corpus.json'), `${JSON.stringify({ schemaVersion: 2, generatedAt: new Date().toISOString(), mode: 'inventory-report', releaseGate: false, restorationClaim: false, engine, builder, floor: floorBuild.reason, selection: { discovered: discovered.length, analyzed: entries.length, omittedByCap }, rows, failures }, null, 2)}\n`);
+  console.log(`inventory report (${entries.length}/${discovered.length} file(s) analyzed${omittedByCap.length > 0 ? `; ${omittedByCap.length} omitted by the 10-file cap` : ''}, engine ${engine.ready ? 'ready' : `blocked: ${engine.reason}`}, builder ${builder.ready ? builder.compiler : `blocked: ${builder.reason}`})`);
   for (const row of rows) {
     const inventory = row.inventory === null
       ? 'n/a'
@@ -213,9 +262,10 @@ if (corpusAt !== -1) {
         : `  baseline: failed (${row.baseline.reason})`);
     }
   }
-  console.log('function-level restoration: not scored - a real binary has no truth source; scores require the R-ladder or a known source');
+  console.log('function-level restoration: not scored - this inventory report is not a release gate');
   console.log(`json ${join(out, 'recon-corpus.json')}`);
-  process.exit(0);
+  for (const failure of failures) console.log(`FAIL ${failure}`);
+  process.exit(!engine.ready || (wantBaseline && !builder.ready) ? 2 : failures.length > 0 ? 1 : 0);
 }
 
 const readiness = await buildReadiness();
@@ -394,6 +444,7 @@ for (const tier of selectedTiers) {
     targetSha256: report.file.sha256,
     targetSize: targetBuffer.length,
     unresolvedRegions: report.unresolved.length,
+    sealed: truthSpec.truth.sealed === true,
     budget: 3,
   });
   recordIteration(state, {
@@ -402,7 +453,10 @@ for (const tier of selectedTiers) {
     build: rebuild,
     compare: ceiling,
   });
-  if (state.status !== 'converged') failures.push(`${tier}: the loop with the truth draft ended ${state.status} (${state.reason ?? 'no reason'})`);
+  row.loopGate = state.gate;
+  row.loopReason = state.reason;
+  const expectedLoopStatus = ['R1', 'R2'].includes(tier) ? 'blocked' : tier === 'R4' ? 'unreachable' : 'converged';
+  if (state.status !== expectedLoopStatus) failures.push(`${tier}: the loop with the truth draft ended ${state.status}, expected ${expectedLoopStatus} (${state.reason ?? state.gate?.failedGates.join(', ') ?? 'no reason'})`);
 
   // Mechanical baseline: decompile, translate, compile, compare. No model is
   // involved anywhere in this column. The inventory is bounded to the first 12

@@ -10,11 +10,13 @@
  *
  * Also exposes the module reachability walk used by that gate.
  *
- * Run: node scripts/update-code-structure.mjs [--check]
+ * Run: node scripts/gates/update-code-structure.mjs [--check]
  */
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { parseModuleEdges } from './module-graph.mjs';
 
 export const BEGIN = '<!-- code-structure:begin -->';
 export const END = '<!-- code-structure:end -->';
@@ -54,24 +56,30 @@ function listFiles(dir, pattern) {
   return found;
 }
 
-/** Every entry the block documents, in a stable order. */
-export function structureEntries(root = join(ROOT, '..')) {
+/** Every file the block documents, in a stable and unique order. */
+export function structurePaths(root = join(ROOT, '..', '..')) {
   const files = [
     join(root, 'index.js'),
     join(root, 'client.js'),
     ...listFiles(join(root, 'lib'), /\.(?:js|mjs)$/),
     ...listFiles(join(root, 'scripts'), /\.mjs$/),
-    ...listFiles(join(root, 'scripts', 'duel'), /\.mjs$/),
-  ];
-  return files
-    .filter((file) => existsSync(file))
-    .map((file) => {
-      const name = file.slice(root.length + 1).replace(/\\/g, '/');
-      return `- ${name}: ${summarize(readFileSync(file, 'utf8'))}`;
-    });
+  ].filter((file) => existsSync(file));
+  const unique = [...new Set(files)];
+  if (unique.length !== files.length) {
+    throw new Error('structure entries contain duplicate paths');
+  }
+  return unique;
 }
 
-export function generateBlock(root = join(ROOT, '..')) {
+/** Every entry the block documents, in a stable order. */
+export function structureEntries(root = join(ROOT, '..', '..')) {
+  return structurePaths(root).map((file) => {
+    const name = file.slice(root.length + 1).replace(/\\/g, '/');
+    return `- ${name}: ${summarize(readFileSync(file, 'utf8'))}`;
+  });
+}
+
+export function generateBlock(root = join(ROOT, '..', '..')) {
   return [BEGIN, '```', ...structureEntries(root), '```', END].join('\n');
 }
 
@@ -96,7 +104,7 @@ export function readmeStructureStatus(readmePath) {
  * `new URL('./playbook-worker.mjs', import.meta.url)` expression, not imported,
  * and a walker that only understands `import` would call the live worker dead.
  */
-export function moduleReachability(root = join(ROOT, '..')) {
+export function moduleReachability(root = join(ROOT, '..', '..')) {
   const libDir = join(root, 'lib');
   const canon = (file) => file.replace(/\\/g, '/');
   const files = [
@@ -105,16 +113,17 @@ export function moduleReachability(root = join(ROOT, '..')) {
   ].filter((file) => existsSync(file)).map(canon);
   const fileSet = new Set(files);
   const edges = new Map();
+  const unresolved = [];
   for (const file of files) {
     const source = readFileSync(file, 'utf8');
     const dir = posix.dirname(file);
-    const targets = [];
-    for (const match of source.matchAll(/from\s+'(\.[^']+)'/g)) {
-      targets.push(posix.normalize(`${dir}/${match[1]}`));
+    const parsed = parseModuleEdges(source);
+    for (const expression of parsed.unresolved) {
+      unresolved.push(`${file.slice(canon(root).length + 1)}: import(${expression})`);
     }
-    for (const match of source.matchAll(/new URL\('(\.[^']+)',\s*import\.meta\.url\)/g)) {
-      targets.push(posix.normalize(`${dir}/${match[1]}`));
-    }
+    const targets = parsed.edges
+      .filter((specifier) => specifier.startsWith('.'))
+      .map((specifier) => posix.normalize(`${dir}/${specifier}`));
     edges.set(file, targets.filter((target) => fileSet.has(target)));
   }
   const reachable = new Set();
@@ -129,11 +138,15 @@ export function moduleReachability(root = join(ROOT, '..')) {
   const unreachable = files
     .filter((file) => file.startsWith(libPrefix) && !reachable.has(file))
     .map((file) => file.slice(canon(root).length + 1));
-  return { unreachable, total: files.filter((file) => file.startsWith(libPrefix)).length };
+  return {
+    unreachable,
+    unresolved,
+    total: files.filter((file) => file.startsWith(libPrefix)).length,
+  };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
-  const readmePath = join(ROOT, '..', 'README.md');
+  const readmePath = join(ROOT, '..', '..', 'README.md');
   const check = process.argv.includes('--check');
   if (check) {
     const status = readmeStructureStatus(readmePath);
@@ -147,7 +160,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     console.error('README has no code-structure markers; add them around the section first.');
     process.exit(1);
   }
-  const next = readme.slice(0, begin) + generateBlock(join(ROOT, '..')) + readme.slice(end + END.length);
+  const next = readme.slice(0, begin) + generateBlock(join(ROOT, '..', '..')) + readme.slice(end + END.length);
   writeFileSync(readmePath, next);
-  console.log(`code structure: updated ${structureEntries(join(ROOT, '..')).length} entries`);
+  console.log(`code structure: updated ${structureEntries(join(ROOT, '..', '..')).length} entries`);
 }

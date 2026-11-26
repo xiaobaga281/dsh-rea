@@ -5,7 +5,7 @@
 //
 //   ProbeAddress.java <rva> probe [code|pointer]
 //   ProbeAddress.java <rva> decompile
-//   ProbeAddress.java 0 list [maxFunctions]
+//   ProbeAddress.java 0 list [pageSize] [cursor]
 //
 // `rva` is relative to the image base, because that is stable across the
 // preferred-base changes a hardened sample may apply at load time.
@@ -27,7 +27,14 @@ import ghidra.program.model.listing.FunctionIterator;
 import ghidra.program.model.listing.FunctionManager;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.mem.MemoryBlock;
+import ghidra.program.model.symbol.Reference;
+import ghidra.program.model.symbol.ReferenceManager;
 import ghidra.program.model.symbol.Symbol;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Set;
 
 public class ProbeAddress extends GhidraScript {
 
@@ -49,7 +56,7 @@ public class ProbeAddress extends GhidraScript {
         FunctionManager functions = currentProgram.getFunctionManager();
 
         if ("list".equals(mode)) {
-            listFunctions(functions, memory, args.length > 2 ? args[2] : null);
+            listFunctions(functions, memory, args);
             return;
         }
         if ("decompile".equals(mode)) {
@@ -118,17 +125,25 @@ public class ProbeAddress extends GhidraScript {
      * followed by its body, so the host can compare a rebuilt binary function by
      * function without parsing prose.
      */
-    private void listFunctions(FunctionManager functions, Memory memory, String maxArg) throws Exception {
-        int max = 48;
-        if (maxArg != null) {
+    private void listFunctions(FunctionManager functions, Memory memory, String[] args) throws Exception {
+        int pageSize = 48;
+        int cursor = 0;
+        if (args.length > 2) {
             try {
-                max = Math.max(1, Math.min(200, Integer.parseInt(maxArg)));
+                pageSize = Math.max(1, Math.min(200, Integer.parseInt(args[2])));
             } catch (NumberFormatException ignored) {
                 // the caller's default is the safe bound
             }
         }
-        java.util.List<Function> selected = new java.util.ArrayList<>();
-        int total = 0;
+        if (args.length > 3) {
+            try {
+                cursor = Integer.parseInt(args[3]);
+            } catch (NumberFormatException error) {
+                println("LIST_DONE {\"ok\":false,\"error\":\"invalid cursor\"}");
+                return;
+            }
+        }
+        List<Function> ordered = new ArrayList<>();
         FunctionIterator iterator = functions.getFunctions(true);
         while (iterator.hasNext()) {
             Function function = iterator.next();
@@ -139,20 +154,28 @@ public class ProbeAddress extends GhidraScript {
             if (block == null || !block.isExecute()) {
                 continue;
             }
-            total++;
-            if (selected.size() < max) {
-                selected.add(function);
-            }
+            ordered.add(function);
         }
-        println("LIST {\"total\":" + total + ",\"emitted\":" + selected.size()
-                + ",\"truncated\":" + (total > selected.size()) + "}");
+        ordered.sort(Comparator.comparingLong(function -> function.getEntryPoint().getOffset()));
+        int total = ordered.size();
+        if (cursor < 0 || cursor > total) {
+            println("LIST_DONE {\"ok\":false,\"error\":\"cursor outside inventory\"}");
+            return;
+        }
+        int end = Math.min(total, cursor + pageSize);
+        List<Function> selected = new ArrayList<>(ordered.subList(cursor, end));
+        println("LIST {\"total\":" + total + ",\"cursor\":" + cursor
+                + ",\"pageSize\":" + pageSize + ",\"emitted\":" + selected.size() + "}");
         DecompInterface decompiler = new DecompInterface();
         int failed = 0;
-        // Bounded twice: a per-function timeout and a whole-pass deadline. A
-        // decompiler that stalls on one library function must not stretch a
-        // comparison into an unbounded run.
         final int perFunctionSeconds = 8;
-        final long budgetMs = 180_000;
+        // SQLite's amalgamation contains 20-35 KB functions. Eight seconds is
+        // enough for ordinary code but cuts these off; measured standalone
+        // runs complete in 23 s and 56 s. Give only large bodies the extra
+        // ceiling so the page budget stays predictable.
+        final int largeFunctionSeconds = 90;
+        final long largeFunctionBytes = 8_192;
+        final long budgetMs = 240_000;
         long started = System.currentTimeMillis();
         boolean timeStopped = false;
         int emitted = 0;
@@ -170,8 +193,13 @@ public class ProbeAddress extends GhidraScript {
                         + "\",\"entry\":\"" + function.getEntryPoint()
                         + "\",\"rva\":\"0x" + Long.toHexString(functionRva)
                         + "\",\"size\":" + function.getBody().getNumAddresses()
-                        + ",\"cfg\":" + cfgJson(function) + "}");
-                DecompileResults results = decompiler.decompileFunction(function, perFunctionSeconds, monitor);
+                        + ",\"cfg\":" + cfgJson(function)
+                        + ",\"calls\":" + callsJson(function)
+                        + ",\"references\":" + referencesJson(function)
+                        + ",\"referencesTruncated\":" + referencesTruncated(function) + "}");
+                int seconds = function.getBody().getNumAddresses() >= largeFunctionBytes
+                        ? largeFunctionSeconds : perFunctionSeconds;
+                DecompileResults results = decompiler.decompileFunction(function, seconds, monitor);
                 if (results == null || !results.decompileCompleted()) {
                     failed++;
                     println("(decompile failed)");
@@ -185,9 +213,93 @@ public class ProbeAddress extends GhidraScript {
         } finally {
             decompiler.dispose();
         }
-        println("LIST_DONE {\"ok\":true,\"total\":" + total + ",\"emitted\":" + emitted
-                + ",\"failed\":" + failed + ",\"truncated\":" + (total > selected.size())
+        int reached = cursor + emitted;
+        Integer resumeCursor = reached < total ? reached : null;
+        boolean complete = !timeStopped && failed == 0 && reached == total;
+        println("LIST_DONE {\"ok\":true,\"total\":" + total + ",\"cursor\":" + cursor
+                + ",\"pageSize\":" + pageSize + ",\"emitted\":" + emitted
+                + ",\"failed\":" + failed + ",\"nextCursor\":"
+                + (resumeCursor == null ? "null" : resumeCursor)
+                + ",\"inventoryComplete\":" + complete
+                + ",\"truncated\":" + !complete
                 + ",\"timeStopped\":" + timeStopped + ",\"budgetMs\":" + budgetMs + "}");
+    }
+
+    private String functionIdentity(Function function) {
+        long rva = function.getEntryPoint().getOffset() - currentProgram.getImageBase().getOffset();
+        return "{\"name\":\"" + esc(function.getName()) + "\",\"rva\":\"0x"
+                + Long.toHexString(rva) + "\"}";
+    }
+
+    private String callsJson(Function function) {
+        StringBuilder json = new StringBuilder("{");
+        json.append(functionListJson(function.getCalledFunctions(monitor), "callees"));
+        json.append(',');
+        json.append(functionListJson(function.getCallingFunctions(monitor), "callers"));
+        return json.append("}").toString();
+    }
+
+    private String functionListJson(Set<Function> source, String key) {
+        List<Function> ordered = new ArrayList<>(source == null ? Collections.emptyList() : source);
+        ordered.sort(Comparator.comparingLong(function -> function.getEntryPoint().getOffset()));
+        StringBuilder json = new StringBuilder("\"").append(key).append("\":[");
+        for (int i = 0; i < Math.min(32, ordered.size()); i++) {
+            if (i > 0) json.append(',');
+            json.append(functionIdentity(ordered.get(i)));
+        }
+        return json.append("],\"").append(key).append("Limited\":")
+                .append(ordered.size() > 32).toString();
+    }
+
+    private int referenceLimit() {
+        return 32;
+    }
+
+    private boolean referencesTruncated(Function function) {
+        ReferenceManager manager = currentProgram.getReferenceManager();
+        int count = 0;
+        var sources = manager.getReferenceSourceIterator(function.getBody(), true);
+        while (sources.hasNext()) {
+            for (Reference reference : manager.getReferencesFrom(sources.next())) {
+                if (reference.isMemoryReference() && ++count > referenceLimit()) return true;
+            }
+        }
+        return false;
+    }
+
+    private String referencesJson(Function function) {
+        ReferenceManager manager = currentProgram.getReferenceManager();
+        List<Reference> references = new ArrayList<>();
+        var sources = manager.getReferenceSourceIterator(function.getBody(), true);
+        while (sources.hasNext() && references.size() <= referenceLimit()) {
+            Address from = sources.next();
+            for (Reference reference : manager.getReferencesFrom(from)) {
+                if (reference.isMemoryReference()) references.add(reference);
+                if (references.size() > referenceLimit()) break;
+            }
+        }
+        references.sort(Comparator.comparing(Reference::getFromAddress));
+        StringBuilder json = new StringBuilder("[");
+        for (int i = 0; i < Math.min(referenceLimit(), references.size()); i++) {
+            if (i > 0) json.append(',');
+            Reference reference = references.get(i);
+            Address to = reference.getToAddress();
+            long fromRva = reference.getFromAddress().getOffset() - currentProgram.getImageBase().getOffset();
+            long toRva = to.getOffset() - currentProgram.getImageBase().getOffset();
+            Symbol symbol = currentProgram.getSymbolTable().getPrimarySymbol(to);
+            Data data = currentProgram.getListing().getDataContaining(to);
+            json.append("{\"fromRva\":\"0x").append(Long.toHexString(fromRva))
+                    .append("\",\"toRva\":\"0x").append(Long.toHexString(toRva))
+                    .append("\",\"type\":\"").append(esc(reference.getReferenceType().getName()))
+                    .append("\",\"operand\":").append(reference.getOperandIndex())
+                    .append(",\"targetName\":\"").append(symbol == null ? "" : esc(symbol.getName()))
+                    .append("\"");
+            if (data != null && data.hasStringValue()) {
+                json.append(",\"string\":\"").append(esc(data.getDefaultValueRepresentation())).append("\"");
+            }
+            json.append('}');
+        }
+        return json.append(']').toString();
     }
 
     /**

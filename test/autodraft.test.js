@@ -179,9 +179,10 @@ test('a null-overall first round keeps the real build and never fakes a failure'
     measure,
     isSettled: notSettledBelow(0.9),
   });
-  assert.notEqual(result.best, null, 'a successful compile must not become auto-failed');
-  assert.equal(result.best.built.marker, 'build-1', 'the real built artifact is kept');
-  assert.equal(result.best.compare.overall, null);
+  assert.equal(result.best, null, 'an unmeasurable comparison is not an accepted best');
+  assert.equal(result.candidate.built.marker, 'build-1', 'the real built artifact is kept as the measured candidate');
+  assert.equal(result.candidate.compare.overall, null);
+  assert.equal(result.firstFailure, null, 'a successful compile must not become auto-failed');
   assert.equal(result.history.length, 1);
   assert.equal(calls.length, 1);
 });

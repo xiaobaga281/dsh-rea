@@ -5,7 +5,7 @@
  * heuristic against its own assumptions, NOT real-world packer detection.
  * To get a publishable number, pass a labelled directory:
  *
- *   node scripts/triage-baseline.mjs --corpus /abs/path
+ *   node scripts/corpus/triage-baseline.mjs --corpus /abs/path
  *   /abs/path/packed/*   protected or packed samples (positive)
  *   /abs/path/clean/*    ordinary binaries and installers (negative)
  *
@@ -15,7 +15,7 @@
 import { readdir, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 
-import { triageBuffer, triageFile } from '../lib/static/triage.js';
+import { triageBuffer, triageFile } from '../../lib/static/triage.js';
 
 function fakePE({ sectionName = '.text', virtualSize = 0x1000, rawSize = 0x1000 } = {}) {
   const bytes = Buffer.alloc(0x400);

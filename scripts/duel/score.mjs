@@ -12,7 +12,7 @@
  *     key. Those are removed from that generation's reachable ceiling instead
  *     of being charged to recall *and* to honesty.
  *
- * @module dsh-rea/scripts/duel/score
+ * @module dsh-rea-restore/scripts/duel/score
  */
 
 /**

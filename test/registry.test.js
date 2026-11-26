@@ -46,6 +46,24 @@ test('a changed schema is re-registered once', () => {
   assert.deepEqual(disposed, ['a']);
 });
 
+test('annotation-only and output-schema-only changes are re-registered', () => {
+  const { registry, registered, disposed } = harness();
+  registry.apply([definition('a')]);
+  const annotated = registry.apply([{
+    ...definition('a'),
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }]);
+  assert.equal(annotated.updated, 1);
+  const outputChanged = registry.apply([{
+    ...definition('a'),
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    output: { schema: { type: 'object', properties: { text: { type: 'string' } } } },
+  }]);
+  assert.equal(outputChanged.updated, 1);
+  assert.deepEqual(registered, ['a', 'a', 'a']);
+  assert.deepEqual(disposed, ['a', 'a']);
+});
+
 test('a tool the server dropped is disposed', () => {
   const { registry, disposed } = harness();
   registry.apply([definition('a'), definition('b')]);

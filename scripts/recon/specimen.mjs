@@ -15,7 +15,7 @@
  * opt-in interaction tier has a real target; it is scored statically and never
  * creates a window.
  *
- * Run through `scripts/recon.mjs`; nothing here executes a sample.
+ * Run through `scripts/recon/run.mjs`; nothing here executes a sample.
  */
 
 import { mkdir, writeFile } from 'node:fs/promises';

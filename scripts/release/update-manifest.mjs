@@ -9,11 +9,11 @@ import { createHash } from 'node:crypto';
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { signManifest } from '../lib/infra/manifest-signature.js';
+import { signManifest } from '../../lib/infra/manifest-signature.js';
 
-const root = join(import.meta.dirname, '..');
+const root = join(import.meta.dirname, '../..');
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-const archive = join(root, 'dist', `dsh-rea-${pkg.version}.tgz`);
+const archive = join(root, 'dist', `${pkg.name}-${pkg.version}.tgz`);
 
 let digest = '';
 let size = 0;
@@ -29,7 +29,7 @@ try {
 const manifest = {
   version: pkg.version,
   tag: `v${pkg.version}`,
-  asset_url: `https://github.com/xiaobaga281/dsh-rea/releases/download/v${pkg.version}/dsh-rea-${pkg.version}.tgz`,
+  asset_url: `https://registry.npmjs.org/${pkg.name}/-/${pkg.name}-${pkg.version}.tgz`,
   release_url: `https://github.com/xiaobaga281/dsh-rea/releases/tag/v${pkg.version}`,
   sha256: digest,
   size,

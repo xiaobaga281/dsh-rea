@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "kind": "restore-gates",
+  "note": "Explicit real function sets. Passing covers only the listed functions and does not prove original source or whole-program behavior equivalence. Sample execution is not authorized by this manifest.",
+  "files": [
+    {
+      "name": "sqlite3-nine-functions",
+      "target": "../../dist/corpus/sqlite3.dll",
+      "draft": "./sqlite3-restored.c",
+      "bytes": 3181056,
+      "sha256": "579fe388f0b930225492c18669f4930c00e3abef515a6328f29f8c2bc5eceefe",
+      "draftSha256": "1341dfe6149515b34c02ddee7285e79d64414f177ab997b5a09e66b6497afd12",
+      "project": "SQLite 3.46.0 Windows x64",
+      "license": "Public domain",
+      "provenance": "https://www.sqlite.org/2024/sqlite-dll-win-x64-3460000.zip",
+      "scope": "selected-functions",
+      "functions": [
+        "FUN_1800096b0",
+        "FUN_1800096c0",
+        "FUN_1800096e0",
+        "FUN_180009070",
+        "FUN_180009740",
+        "FUN_1800097f0",
+        "FUN_180009750",
+        "FUN_180009820",
+        "FUN_1800099a0"
+      ],
+      "metric": "semantic",
+      "threshold": 0.75,
+      "pageSize": 200,
+      "expected": {
+        "functions": 9,
+        "matched": 9,
+        "belowThreshold": 0
+      }
+    },
+    {
+      "name": "7zr-two-functions",
+      "target": "../../dist/corpus/7zr.exe",
+      "draft": "./7zr-restored.c",
+      "bytes": 602624,
+      "sha256": "256feca8e274e5da655e2a284fabafd9f554365eb164862089dacd4e8276d282",
+      "draftSha256": "388ac230cac1386012ab609b8f10bfa85cafe70ef101df9f275fe61ae8922e8c",
+      "project": "7-Zip standalone console",
+      "license": "LGPL-2.1",
+      "provenance": "https://www.7-zip.org/a/7zr.exe",
+      "scope": "selected-functions",
+      "functions": [
+        "FUN_00401207",
+        "FUN_00401519"
+      ],
+      "metric": "semantic",
+      "threshold": 0.75,
+      "pageSize": 200,
+      "expected": {
+        "functions": 2,
+        "matched": 2,
+        "belowThreshold": 0
+      }
+    }
+  ]
+}

@@ -1,15 +1,14 @@
 /**
- * Sidebar half of `dsh-rea`: the environment panel, engine preparation,
+ * Sidebar half of `dsh-rea-restore`: the environment panel, engine preparation,
  * update controls and the security-policy switches.
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-rea',
+  id: 'dsh-rea-restore',
   factory: (require) => {
     const React = require('react');
-    const jsx = require('react/jsx-runtime');
     const h = React.createElement;
-    const PLUGIN_ID = 'dsh-rea';
-    const NS = 'dsh-rea';
+    const PLUGIN_ID = 'dsh-rea-restore';
+    const NS = 'dsh-rea-restore';
     const dicts = {
       zh: {
         title: '逆向分析', subtitle: '环境与引擎', refresh: '刷新', loading: '读取环境…',
@@ -447,8 +446,8 @@ window.__ModuleLoader__.load({
       // report the value the person actually clicked.
       __test: { PolicySection, Toggle, ScopePicker, styles: css + extraCss + policyCss },
       apply(ctx) {
-        ctx.effect(() => ctx.locale.register(NS, dicts), 'dsh-rea: dictionaries');
-        ctx.effect(() => { const style = document.createElement('style'); style.dataset.plugin = PLUGIN_ID; style.textContent = css + extraCss + policyCss; document.head.appendChild(style); return () => style.remove(); }, 'dsh-rea: styles');
+        ctx.effect(() => ctx.locale.register(NS, dicts), 'dsh-rea-restore: dictionaries');
+        ctx.effect(() => { const style = document.createElement('style'); style.dataset.plugin = PLUGIN_ID; style.textContent = css + extraCss + policyCss; document.head.appendChild(style); return () => style.remove(); }, 'dsh-rea-restore: styles');
         const t = ctx.locale.bind(NS);
         const panelId = 'rea';
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: panelId, order: 85, label: () => t('title') }, ({ size, active }) => lensIcon(size, active)));

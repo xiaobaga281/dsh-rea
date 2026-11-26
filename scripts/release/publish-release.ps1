@@ -1,21 +1,21 @@
 # Publish dsh-rea from a machine that can reach github.com.
 #
 #   $env:GH_TOKEN = 'ghp_...'      # repo scope
-#   pwsh -File scripts/publish-release.ps1 -Version 1.9.0
+#   pwsh -File scripts/release/publish-release.ps1 -Version 1.11.0
 #
 # Steps: push main, create the GitHub release for the tag, upload the tarball
 # built by `npm run pack`. The token is only ever read from the environment and
 # is never written into .git/config or printed.
 
 param(
-  [Parameter(Mandatory = $false)][string]$Version = ((Get-Content (Join-Path $PSScriptRoot '..' 'package.json') -Raw | ConvertFrom-Json).version),
+  [Parameter(Mandatory = $false)][string]$Version = ((Get-Content (Join-Path $PSScriptRoot '..' '..' 'package.json') -Raw | ConvertFrom-Json).version),
   [Parameter(Mandatory = $false)][string]$Token = $env:GH_TOKEN,
   [string]$Owner = 'xiaobaga281',
   [string]$Repo = 'dsh-rea'
 )
 
 $ErrorActionPreference = 'Stop'
-$root = Resolve-Path (Join-Path $PSScriptRoot '..')
+$root = Resolve-Path (Join-Path $PSScriptRoot '..' '..')
 Set-Location $root
 
 if (-not $Token) { throw 'set GH_TOKEN (or pass -Token) with a repo-scoped token' }

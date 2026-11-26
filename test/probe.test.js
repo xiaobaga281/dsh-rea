@@ -113,7 +113,7 @@ test('an unavailable engine downgrades the probe instead of dropping it', () => 
     providers: { providers: { ghidra: { ready: false, reason: 'Ghidra 的 JVM 无法创建 tmp/<user>-ghidra' } } },
   });
   const tls = plan.find((entry) => entry.action.includes('TLS callback'));
-  assert.equal(tls.probe.tool, 'probe_address');
+  assert.equal(tls.probe.tool, 'rea_probe_address');
   assert.equal(tls.probe.tier, 'local');
   assert.equal(tls.probe.kind, 'code');
   assert.equal(tls.probe.rva, TLS_RVA);
@@ -139,7 +139,7 @@ test('when both can run, the engine this plugin starts is preferred', () => {
     },
   });
   const tls = plan.find((entry) => entry.action.includes('TLS callback'));
-  assert.equal(tls.probe.tool, 'probe_address');
+  assert.equal(tls.probe.tool, 'rea_probe_address');
   assert.equal(tls.probe.via, 'ghidra-local');
   assert.equal(tls.probe.tier, 'engine');
   assert.equal(tls.provider.ready, true);
@@ -160,7 +160,7 @@ test('a broken wrapper falls back to the first-party twin, not to a weaker claim
     },
   });
   const tls = plan.find((entry) => entry.action.includes('TLS callback'));
-  assert.equal(tls.probe.tool, 'probe_address');
+  assert.equal(tls.probe.tool, 'rea_probe_address');
   assert.equal(tls.probe.tier, 'engine');
   assert.equal(tls.probe.via, 'ghidra-local');
   assert.equal(tls.blocked, undefined, 'a working twin is not a block');
@@ -183,9 +183,31 @@ test('with no engine at all the probe drops to a structural check', () => {
     },
   });
   const tls = plan.find((entry) => entry.action.includes('TLS callback'));
-  assert.equal(tls.probe.tool, 'probe_address');
+  assert.equal(tls.probe.tool, 'rea_probe_address');
   assert.equal(tls.probe.tier, 'local');
   assert.match(tls.blocked, /Ghidra not installed/);
+});
+
+test('a confirm line with a fallback inspects every named provider', () => {
+  const plan = planNextSteps({
+    structure: { sections: [], tls: { present: false, callbacks: [] }, dispatchTables: [], importsPresent: false },
+    unresolved: [{ label: 'sealed-config', offset: 0x600, length: 1024, rva: 0x1000 }],
+    strings: [{ value: 'cfg=rc4;key=derive(GetVolumeInformationA.serial);' }],
+    providers: {
+      providers: {
+        frida: { ready: false, reason: 'frida is not installed' },
+        gdb: { ready: true, reason: null },
+      },
+    },
+  });
+  const step = plan.find((entry) => entry.confirm.includes('load_frida_script'));
+  assert.ok(step);
+  assert.equal(step.provider.key, 'frida');
+  assert.equal(step.provider.ready, true);
+  assert.equal(step.provider.selected, 'gdb');
+  assert.equal(step.provider.reason, null);
+  assert.deepEqual(step.provider.choices.map((item) => [item.key, item.ready]), [['frida', false], ['gdb', true]]);
+  assert.equal(step.blocked, undefined, 'a ready fallback is not a blocked step');
 });
 
 test('a ready engine keeps the engine probe', () => {

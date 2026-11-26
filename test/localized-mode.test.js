@@ -178,7 +178,7 @@ function assertNoIdentity(headers) {
 
 /* ── 1. request headers carry no user identity ─────────────────────────── */
 
-test('fetchText sends only user-agent "dsh-rea" and accept, with nothing that names this host', async (t) => {
+test('fetchText sends only user-agent "dsh-rea-restore" and accept, with nothing that names this host', async (t) => {
   const mocks = installMocks(t);
   try {
     const text = await fetchText('https://update.example.test/manifest.json');
@@ -188,7 +188,7 @@ test('fetchText sends only user-agent "dsh-rea" and accept, with nothing that na
     const headers = direct[0].headers;
     // Literal equality: the UA is a compile-time constant, so a version, a
     // platform string or a hostname would fail this comparison.
-    assert.equal(headers['user-agent'], 'dsh-rea');
+    assert.equal(headers['user-agent'], 'dsh-rea-restore');
     assert.deepEqual(Object.keys(headers).sort(), ['accept', 'user-agent']);
     assert.equal(headers.accept, 'application/json, text/plain, */*');
     assertNoIdentity(headers);
@@ -205,7 +205,7 @@ test('downloadFile sends the same minimal header set on the large-file path', as
     const direct = mocks.calls.filter((call) => call.kind === 'direct');
     assert.equal(direct.length, 1);
     const headers = direct[0].headers;
-    assert.equal(headers['user-agent'], 'dsh-rea');
+    assert.equal(headers['user-agent'], 'dsh-rea-restore');
     assert.deepEqual(Object.keys(headers).sort(), ['accept', 'user-agent']);
     assert.equal(headers.accept, '*/*');
     assertNoIdentity(headers);
@@ -235,7 +235,7 @@ test('proxy credentials ride the CONNECT hop to the configured proxy only', asyn
     assertNoIdentity({ ...tunnels[0].headers });
     // The tunneled request itself must not carry the proxy credentials.
     assert.ok(!('proxy-authorization' in inner[0].headers));
-    assert.equal(inner[0].headers['user-agent'], 'dsh-rea');
+    assert.equal(inner[0].headers['user-agent'], 'dsh-rea-restore');
     assert.deepEqual(Object.keys(inner[0].headers).sort(), ['accept', 'user-agent']);
     assertNoIdentity(inner[0].headers);
   } finally { mocks.done(); }
@@ -291,7 +291,7 @@ test('localizedMode refuses the update check and install without a single connec
     assert.equal(real.hasUpdate, true);
     assert.equal(mocks.calls.length, 1);
     const headers = mocks.calls[0].headers;
-    assert.equal(headers['user-agent'], 'dsh-rea');
+    assert.equal(headers['user-agent'], 'dsh-rea-restore');
     assertNoIdentity(headers);
   } finally { mocks.done(); }
 });

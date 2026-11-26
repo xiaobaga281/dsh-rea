@@ -1,31 +1,37 @@
+/**
+ * Explicit real-corpus restoration suite: positive semantic gates, negative
+ * text controls, W4 hypothesis riders and fresh-record binding. It is separate
+ * from the default suite because it starts Ghidra and compiles real drafts.
+ *
+ * @module dsh-rea-restore/scripts/recon/restore-real
+ */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-import { buildReadiness } from '../lib/restore/build.js';
-import { ghidraLocalReadiness } from '../lib/restore/ghidra-local.js';
+import { buildReadiness } from '../../lib/restore/build.js';
+import { ghidraLocalReadiness } from '../../lib/restore/ghidra-local.js';
 
 /**
  * Function-level restoration gate, pinned end to end.
  *
- * The gate's Ghidra inventory cache keys on the exact path string it is handed
- * (lib/ghidra-local.js listCachePath), so every run below passes the same
- * relative strings from the package root: an absolute path is a different
- * cache key and would pay a full cold analysis of the sqlite3 cap-200 window,
- * which the ProbeAddress list budget can truncate. Exit codes are read from
+ * The gate's Ghidra inventory cache keys on target content and inventory
+ * configuration. These tests keep stable relative target strings so records
+ * remain easy to align with the reviewed corpus paths. Exit codes are read from
  * spawnSync's status, not from a pipe, because `| tail` reports the tail's
  * status and would swallow a failing gate.
  *
  * The gate itself appends one machine-readable JSON line per run to
- * dist/restore-gates.jsonl (scripts/recon-restore.mjs --record); each test
+ * dist/restore-gates.jsonl (scripts/recon/restore.mjs --record); each test
  * reads the last line and pins its own verdict there too, so the structured
  * record a validator aligns against cannot silently drift from what ran.
  */
 
-const pkgRoot = fileURLToPath(new URL('..', import.meta.url));
+const pkgRoot = fileURLToPath(new URL('../..', import.meta.url));
 const gateRecords = join(pkgRoot, 'dist', 'restore-gates.jsonl');
 
 // Nine restored bodies: the six pinned by the first review plus the decompiled
@@ -38,29 +44,104 @@ const SQLITE3_FUNCTIONS = [
 
 // The gate runs are serial within this file, so the last record line is the
 // one this test just produced.
-function lastGateRecord() {
-  const lines = readFileSync(gateRecords, 'utf8').trim().split(/\r?\n/).filter(Boolean);
-  return JSON.parse(lines[lines.length - 1]);
+function readGateRecords() {
+  if (!existsSync(gateRecords)) return [];
+  return readFileSync(gateRecords, 'utf8').trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
 }
 
 function runGate(args) {
-  return spawnSync(process.execPath, ['scripts/recon-restore.mjs', ...args], {
+  const previousRecordCount = readGateRecords().length;
+  const startedAt = new Date().toISOString();
+  const run = spawnSync(process.execPath, ['scripts/recon/restore.mjs', ...args, '--max-functions', '200'], {
     cwd: pkgRoot,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
-    timeout: 300_000,
+    timeout: 1_800_000,
   });
+  const records = readGateRecords();
+  run.startedAt = startedAt;
+  run.finishedAt = new Date().toISOString();
+  run.previousRecordCount = previousRecordCount;
+  run.recordCount = records.length;
+  run.record = records.length === previousRecordCount + 1 ? records[records.length - 1] : null;
+  return run;
 }
+
+function recordForRun(run) {
+  assert.equal(run.recordCount, run.previousRecordCount + 1, 'the gate must append exactly one new record');
+  assert.ok(run.record, 'the gate record for this run is missing');
+  const record = run.record;
+  const digestFile = (path) => createHash('sha256').update(readFileSync(resolve(pkgRoot, path))).digest('hex');
+  assert.equal(record.schemaVersion, 2, 'fresh gate evidence must use schema v2');
+  assert.match(record.recordedAt ?? '', /^\d{4}-\d{2}-\d{2}T/);
+  assert.ok(record.recordedAt >= run.startedAt && record.recordedAt <= run.finishedAt, 'the gate record must belong to this run');
+  assert.match(record.targetSha256 ?? '', /^[a-f0-9]{64}$/i, 'targetSha256 must be bound');
+  assert.match(record.sourceSha256 ?? '', /^[a-f0-9]{64}$/i, 'sourceSha256 must be bound');
+  assert.equal(record.targetSha256, digestFile(record.target), 'targetSha256 must match the reviewed target bytes');
+  assert.equal(record.sourceSha256, digestFile(record.draftPath), 'sourceSha256 must match the reviewed draft bytes');
+  assert.ok(Array.isArray(record.gateFailures), 'fresh gate evidence must carry gate failures');
+  if (record.exit === 0) {
+    assert.match(record.rebuiltSha256 ?? '', /^[a-f0-9]{64}$/i, 'a fresh pass must bind the rebuilt bytes');
+    assert.equal(record.rebuiltSha256, digestFile(record.rebuiltPath), 'rebuiltSha256 must match the reviewed rebuilt bytes');
+    assert.deepEqual(record.gateFailures, [], 'a fresh pass must have no gate failures');
+  }
+  return record;
+}
+
+function identityBoundPass(record, target, draftPath) {
+  try {
+    return record?.schemaVersion === 2 && record.exit === 0
+      && record.targetSha256 === createHash('sha256').update(readFileSync(target)).digest('hex')
+      && record.sourceSha256 === createHash('sha256').update(readFileSync(draftPath)).digest('hex')
+      && record.rebuiltSha256 === createHash('sha256').update(readFileSync(record.rebuiltPath)).digest('hex')
+      && Array.isArray(record.gateFailures) && record.gateFailures.length === 0;
+  } catch {
+    return false;
+  }
+}
+
+test('a gate assertion cannot reuse a record from an earlier run', () => {
+  assert.doesNotMatch(readFileSync(fileURLToPath(import.meta.url), 'utf8'), /\bconst identityBoundPass\b/, 'historical checks must not shadow the shared digest verifier');
+  assert.throws(() => recordForRun({ previousRecordCount: 4, recordCount: 4, record: null }), /exactly one new record/);
+  assert.throws(() => recordForRun({ previousRecordCount: 4, recordCount: 5, record: null }), /record for this run is missing/);
+  const digest = (path) => createHash('sha256').update(readFileSync(resolve(pkgRoot, path))).digest('hex');
+  const base = {
+    previousRecordCount: 4, recordCount: 5,
+    startedAt: '2026-11-24T00:00:00.000Z', finishedAt: '2026-11-24T00:01:00.000Z',
+    record: {
+      schemaVersion: 2, recordedAt: '2026-11-24T00:00:30.000Z', exit: 0,
+      target: 'package.json', draftPath: 'index.js', rebuiltPath: 'client.js',
+      targetSha256: digest('package.json'), sourceSha256: digest('index.js'), rebuiltSha256: digest('client.js'), gateFailures: [],
+    },
+  };
+  assert.equal(recordForRun(base).exit, 0);
+  assert.equal(identityBoundPass(base.record, 'package.json', 'index.js'), true);
+  assert.equal(identityBoundPass({ ...base.record, rebuiltSha256: 'c'.repeat(64) }, 'package.json', 'index.js'), false);
+  assert.equal(identityBoundPass({ ...base.record, rebuiltPath: 'missing.exe' }, 'package.json', 'index.js'), false);
+  for (const [field, value, pattern] of [
+    ['schemaVersion', 1, /schema v2/],
+    ['recordedAt', '2026-11-23T23:59:59.000Z', /belong to this run/],
+    ['targetSha256', 'a'.repeat(64), /target bytes/],
+    ['sourceSha256', undefined, /sourceSha256|targetSha256/],
+    ['sourceSha256', 'b'.repeat(64), /draft bytes/],
+    ['rebuiltSha256', undefined, /rebuilt bytes/],
+    ['rebuiltSha256', 'c'.repeat(64), /rebuilt bytes/],
+    ['gateFailures', ['old failure'], /no gate failures/],
+  ]) {
+    const record = { ...base.record, [field]: value };
+    assert.throws(() => recordForRun({ ...base, record }), pattern, field);
+  }
+});
 
 test('restore gate: nine decompiled sqlite3 functions pass the semantic review floor', async (t) => {
   const ghidra = await ghidraLocalReadiness();
   if (!ghidra.ready) {
-    t.skip(`no Ghidra (${ghidra.reason})`);
+    assert.fail(`no Ghidra (${ghidra.reason})`);
     return;
   }
   const builder = await buildReadiness();
   if (!builder.ready) {
-    t.skip(`no build engine (${builder.reason})`);
+    assert.fail(`no build engine (${builder.reason})`);
     return;
   }
   const run = runGate([
@@ -75,7 +156,7 @@ test('restore gate: nine decompiled sqlite3 functions pass the semantic review f
   assert.match(run.stdout, /9\/9 functions/);
   assert.match(run.stdout, /coverage 100\.0%/);
   assert.match(run.stdout, /below threshold 0/);
-  const record = lastGateRecord();
+  const record = recordForRun(run);
   assert.equal(record.target, 'dist/corpus/sqlite3.dll');
   assert.equal(record.metric, 'semantic');
   assert.equal(record.threshold, 0.75);
@@ -87,12 +168,12 @@ test('restore gate: nine decompiled sqlite3 functions pass the semantic review f
 test('restore gate: the same nine functions fail a text review at 99% (negative control)', async (t) => {
   const ghidra = await ghidraLocalReadiness();
   if (!ghidra.ready) {
-    t.skip(`no Ghidra (${ghidra.reason})`);
+    assert.fail(`no Ghidra (${ghidra.reason})`);
     return;
   }
   const builder = await buildReadiness();
   if (!builder.ready) {
-    t.skip(`no build engine (${builder.reason})`);
+    assert.fail(`no build engine (${builder.reason})`);
     return;
   }
   // Same function list, same draft: pseudocode-level text similarity of an
@@ -110,7 +191,7 @@ test('restore gate: the same nine functions fail a text review at 99% (negative 
   assert.match(run.stdout, /T2 \(text, threshold 99%\): ran/);
   assert.match(run.stdout, /9\/9 functions/);
   assert.match(run.stdout, /below threshold 9/);
-  const record = lastGateRecord();
+  const record = recordForRun(run);
   assert.equal(record.metric, 'text');
   assert.equal(record.threshold, 0.99);
   assert.equal(record.exit, 1);
@@ -120,30 +201,29 @@ test('restore gate: the same nine functions fail a text review at 99% (negative 
 test('restore gate: two decompiled 7zr functions pass the semantic review floor', async (t) => {
   const ghidra = await ghidraLocalReadiness();
   if (!ghidra.ready) {
-    t.skip(`no Ghidra (${ghidra.reason})`);
+    assert.fail(`no Ghidra (${ghidra.reason})`);
     return;
   }
   const builder = await buildReadiness();
   if (!builder.ready) {
-    t.skip(`no build engine (${builder.reason})`);
+    assert.fail(`no build engine (${builder.reason})`);
     return;
   }
-  // --max-functions 24 is required: there is no cap-200 inventory cached for
-  // 7zr.exe, and the relative path string is what hits the cap-24 cache.
+  // All pages are aggregated; the shared 200-function page size reuses the
+  // complete inventory rather than treating a small window as full coverage.
   const run = runGate([
     'dist/corpus/7zr.exe',
     '--functions', 'FUN_00401207,FUN_00401519',
     '--draft', 'test/fixtures/7zr-restored.c',
     '--metric', 'semantic',
     '--threshold', '0.75',
-    '--max-functions', '24',
   ]);
   assert.equal(run.error, undefined, `the gate run was interrupted: ${run.error}`);
   assert.equal(run.status, 0, `exit ${run.status}\nstdout tail: ${run.stdout?.slice(-800)}\nstderr tail: ${run.stderr?.slice(-800)}`);
   assert.match(run.stdout, /T2 \(semantic, threshold 75%\): ran/);
   assert.match(run.stdout, /2\/2 functions/);
   assert.match(run.stdout, /below threshold 0/);
-  const record = lastGateRecord();
+  const record = recordForRun(run);
   assert.equal(record.target, 'dist/corpus/7zr.exe');
   assert.equal(record.metric, 'semantic');
   assert.equal(record.exit, 0);
@@ -154,12 +234,12 @@ test('restore gate: two decompiled 7zr functions pass the semantic review floor'
 test('restore gate: the same two 7zr functions fail a text review at 99% (negative control)', async (t) => {
   const ghidra = await ghidraLocalReadiness();
   if (!ghidra.ready) {
-    t.skip(`no Ghidra (${ghidra.reason})`);
+    assert.fail(`no Ghidra (${ghidra.reason})`);
     return;
   }
   const builder = await buildReadiness();
   if (!builder.ready) {
-    t.skip(`no build engine (${builder.reason})`);
+    assert.fail(`no build engine (${builder.reason})`);
     return;
   }
   // Mirror of the sqlite3 negative control: the honest 32-bit-derived draft
@@ -171,14 +251,13 @@ test('restore gate: the same two 7zr functions fail a text review at 99% (negati
     '--draft', 'test/fixtures/7zr-restored.c',
     '--metric', 'text',
     '--threshold', '0.99',
-    '--max-functions', '24',
   ]);
   assert.equal(run.error, undefined, `the gate run was interrupted: ${run.error}`);
   assert.equal(run.status, 1, `exit ${run.status}\nstdout tail: ${run.stdout?.slice(-800)}\nstderr tail: ${run.stderr?.slice(-800)}`);
   assert.match(run.stdout, /T2 \(text, threshold 99%\): ran/);
   assert.match(run.stdout, /2\/2 functions/);
   assert.match(run.stdout, /below threshold 2/);
-  const record = lastGateRecord();
+  const record = recordForRun(run);
   assert.equal(record.target, 'dist/corpus/7zr.exe');
   assert.equal(record.metric, 'text');
   assert.equal(record.threshold, 0.99);
@@ -206,12 +285,12 @@ const Z7R_B2_FUNCTIONS = 'FUN_00401000,FUN_004010ac,FUN_0040116f,FUN_0040125a';
 test('restore gate: seventeen stratified sqlite3 functions pass the semantic review floor', async (t) => {
   const ghidra = await ghidraLocalReadiness();
   if (!ghidra.ready) {
-    t.skip(`no Ghidra (${ghidra.reason})`);
+    assert.fail(`no Ghidra (${ghidra.reason})`);
     return;
   }
   const builder = await buildReadiness();
   if (!builder.ready) {
-    t.skip(`no build engine (${builder.reason})`);
+    assert.fail(`no build engine (${builder.reason})`);
     return;
   }
   const run = runGate([
@@ -226,7 +305,7 @@ test('restore gate: seventeen stratified sqlite3 functions pass the semantic rev
   assert.match(run.stdout, /17\/17 functions/);
   assert.match(run.stdout, /coverage 100\.0%/);
   assert.match(run.stdout, /below threshold 0/);
-  const record = lastGateRecord();
+  const record = recordForRun(run);
   assert.equal(record.target, 'dist/corpus/sqlite3.dll');
   assert.equal(record.metric, 'semantic');
   assert.equal(record.threshold, 0.75);
@@ -238,12 +317,12 @@ test('restore gate: seventeen stratified sqlite3 functions pass the semantic rev
 test('restore gate: the seventeen stratified sqlite3 functions fail a text review at 99% (negative control)', async (t) => {
   const ghidra = await ghidraLocalReadiness();
   if (!ghidra.ready) {
-    t.skip(`no Ghidra (${ghidra.reason})`);
+    assert.fail(`no Ghidra (${ghidra.reason})`);
     return;
   }
   const builder = await buildReadiness();
   if (!builder.ready) {
-    t.skip(`no build engine (${builder.reason})`);
+    assert.fail(`no build engine (${builder.reason})`);
     return;
   }
   const run = runGate([
@@ -258,7 +337,7 @@ test('restore gate: the seventeen stratified sqlite3 functions fail a text revie
   assert.match(run.stdout, /T2 \(text, threshold 99%\): ran/);
   assert.match(run.stdout, /17\/17 functions/);
   assert.match(run.stdout, /below threshold 17/);
-  const record = lastGateRecord();
+  const record = recordForRun(run);
   assert.equal(record.metric, 'text');
   assert.equal(record.threshold, 0.99);
   assert.equal(record.exit, 1);
@@ -268,12 +347,12 @@ test('restore gate: the seventeen stratified sqlite3 functions fail a text revie
 test('restore gate: four stratified 7zr functions (register/SEH shapes) pass the semantic review floor', async (t) => {
   const ghidra = await ghidraLocalReadiness();
   if (!ghidra.ready) {
-    t.skip(`no Ghidra (${ghidra.reason})`);
+    assert.fail(`no Ghidra (${ghidra.reason})`);
     return;
   }
   const builder = await buildReadiness();
   if (!builder.ready) {
-    t.skip(`no build engine (${builder.reason})`);
+    assert.fail(`no build engine (${builder.reason})`);
     return;
   }
   // --max-functions 48: the rebuild carries ~30 CRT/startup functions before
@@ -293,7 +372,7 @@ test('restore gate: four stratified 7zr functions (register/SEH shapes) pass the
   assert.match(run.stdout, /T2 \(semantic, threshold 75%\): ran/);
   assert.match(run.stdout, /4\/4 functions/);
   assert.match(run.stdout, /below threshold 0/);
-  const record = lastGateRecord();
+  const record = recordForRun(run);
   assert.equal(record.target, 'dist/corpus/7zr.exe');
   assert.equal(record.metric, 'semantic');
   assert.equal(record.threshold, 0.75);
@@ -305,12 +384,12 @@ test('restore gate: four stratified 7zr functions (register/SEH shapes) pass the
 test('restore gate: the four stratified 7zr functions fail a text review at 99% (negative control)', async (t) => {
   const ghidra = await ghidraLocalReadiness();
   if (!ghidra.ready) {
-    t.skip(`no Ghidra (${ghidra.reason})`);
+    assert.fail(`no Ghidra (${ghidra.reason})`);
     return;
   }
   const builder = await buildReadiness();
   if (!builder.ready) {
-    t.skip(`no build engine (${builder.reason})`);
+    assert.fail(`no build engine (${builder.reason})`);
     return;
   }
   const run = runGate([
@@ -326,7 +405,7 @@ test('restore gate: the four stratified 7zr functions fail a text review at 99% 
   assert.match(run.stdout, /T2 \(text, threshold 99%\): ran/);
   assert.match(run.stdout, /4\/4 functions/);
   assert.match(run.stdout, /below threshold 4/);
-  const record = lastGateRecord();
+  const record = recordForRun(run);
   assert.equal(record.target, 'dist/corpus/7zr.exe');
   assert.equal(record.metric, 'text');
   assert.equal(record.threshold, 0.99);
@@ -336,26 +415,26 @@ test('restore gate: the four stratified 7zr functions fail a text review at 99% 
 
 // ---------------------------------------------------------------------------
 // W4: the M1 semantic-attribution batch. Hypotheses ride along with the gate
-// additively (scripts/recon-restore.mjs): the T2 verdict alone decides the
+// additively (scripts/recon/restore.mjs): the T2 verdict alone decides the
 // exit code, and the per-hypothesis checks are appended to the JSONL record.
 // The hypothesis files are generated by dist/m1-hypotheses.mjs from the cached
 // inventories; the sqlite3 file carries 34 positive hypotheses + 2 negative
 // controls, the 7zr file 7 + 2.
 // ---------------------------------------------------------------------------
 
-test('restore gate: W4 hypotheses ride along with the sqlite3 batch-1 review, exit code stays T2-only', async (t) => {
+test('restore gate: W4 hypotheses ride along with the sqlite3 batch-1 review, exit code stays T2-only', async () => {
   const ghidra = await ghidraLocalReadiness();
   if (!ghidra.ready) {
-    t.skip(`no Ghidra (${ghidra.reason})`);
+    assert.fail(`no Ghidra (${ghidra.reason})`);
     return;
   }
   const builder = await buildReadiness();
   if (!builder.ready) {
-    t.skip(`no build engine (${builder.reason})`);
+    assert.fail(`no build engine (${builder.reason})`);
     return;
   }
   if (!existsSync(join(pkgRoot, 'dist', 'm1-hypotheses-sqlite3.json'))) {
-    t.skip('W4 hypothesis file not generated yet (node dist/m1-hypotheses.mjs)');
+    assert.fail('W4 sqlite3 hypothesis file is missing; generate it with node dist/m1-hypotheses.mjs');
     return;
   }
   const run = runGate([
@@ -369,7 +448,7 @@ test('restore gate: W4 hypotheses ride along with the sqlite3 batch-1 review, ex
   assert.equal(run.status, 0, `exit ${run.status}\nstdout tail: ${run.stdout?.slice(-800)}\nstderr tail: ${run.stderr?.slice(-800)}`);
   assert.match(run.stdout, /T2 \(semantic, threshold 75%\): ran/);
   assert.match(run.stdout, /9\/9 functions/);
-  const record = lastGateRecord();
+  const record = recordForRun(run);
   assert.equal(record.exit, 0, 'the T2 verdict alone decides the exit code');
   assert.equal(record.hypotheses.length, 36);
   const statuses = {};
@@ -385,19 +464,19 @@ test('restore gate: W4 hypotheses ride along with the sqlite3 batch-1 review, ex
   assert.equal(statuses.refuted, 2, 'exactly the two negative controls refute');
 });
 
-test('restore gate: W4 hypotheses ride along with the 7zr batch-1 review, exit code stays T2-only', async (t) => {
+test('restore gate: W4 hypotheses ride along with the 7zr batch-1 review, exit code stays T2-only', async () => {
   const ghidra = await ghidraLocalReadiness();
   if (!ghidra.ready) {
-    t.skip(`no Ghidra (${ghidra.reason})`);
+    assert.fail(`no Ghidra (${ghidra.reason})`);
     return;
   }
   const builder = await buildReadiness();
   if (!builder.ready) {
-    t.skip(`no build engine (${builder.reason})`);
+    assert.fail(`no build engine (${builder.reason})`);
     return;
   }
   if (!existsSync(join(pkgRoot, 'dist', 'm1-hypotheses-7zr.json'))) {
-    t.skip('W4 hypothesis file not generated yet (node dist/m1-hypotheses.mjs)');
+    assert.fail('W4 7zr hypothesis file is missing; generate it with node dist/m1-hypotheses.mjs');
     return;
   }
   const run = runGate([
@@ -406,13 +485,12 @@ test('restore gate: W4 hypotheses ride along with the 7zr batch-1 review, exit c
     '--draft', 'test/fixtures/7zr-restored.c',
     '--metric', 'semantic',
     '--threshold', '0.75',
-    '--max-functions', '24',
     '--hypotheses', 'dist/m1-hypotheses-7zr.json',
   ]);
   assert.equal(run.error, undefined, `the gate run was interrupted: ${run.error}`);
   assert.equal(run.status, 0, `exit ${run.status}\nstdout tail: ${run.stdout?.slice(-800)}\nstderr tail: ${run.stderr?.slice(-800)}`);
   assert.match(run.stdout, /2\/2 functions/);
-  const record = lastGateRecord();
+  const record = recordForRun(run);
   assert.equal(record.exit, 0, 'the T2 verdict alone decides the exit code');
   assert.equal(record.hypotheses.length, 9);
   const statuses = {};
@@ -428,59 +506,75 @@ test('restore gate: W4 hypotheses ride along with the 7zr batch-1 review, exit c
   assert.equal(statuses.refuted, 2, 'exactly the two negative controls refute');
 });
 
-test('the al-khaser adversarial corpus keeps its closed-loop evidence: gate records and inputs stay in place', () => {
-  // The first function-level loop against a REAL adversarial binary (official
-  // al-khaser v1.1.0 x64 release). Read-only pin: the corpus, the draft and
-  // both gate outcomes must stay reachable, so the evidence chain in
-  // docs/reconstruction-plan.md §13 cannot silently rot.
+test('the al-khaser legacy evidence stays selectable by exact case identity', () => {
+  // These records predate SHA fields. They remain historical pins, never fresh
+  // pass evidence; any record that carries identity fields must match today's bytes.
   const exe = join('dist', 'corpus-adv', 'al-khaser_x64.exe');
   const draft = join('test', 'fixtures', 'al-khaser-restored.c');
   assert.equal(existsSync(exe), true, 'the al-khaser corpus binary is missing');
   assert.equal(existsSync(draft), true, 'the al-khaser restoration draft is missing');
 
   const lines = readFileSync(join('dist', 'restore-gates.jsonl'), 'utf8')
-    .split(/\r?\n/).filter((line) => line.includes('al-khaser') || line.includes('7zr-ultra') || line.includes('sqlite3.dll'))
+    .split(/\r?\n/).filter(Boolean)
     .map((line) => JSON.parse(line));
   const latest = (predicate) => [...lines].reverse().find(predicate);
-  // The trio record: the first closed loop on the real adversarial binary.
-  const trio = latest((record) => record.metric === 'semantic' && record.requested.length === 3);
-  assert.ok(trio, 'no 3-function semantic gate record for al-khaser');
-  assert.equal(trio.threshold, 0.75);
-  assert.equal(trio.exit, 0, 'the 3-function review must pass the 0.75 floor');
-  assert.ok(trio.result.score >= 0.85, `semantic score regressed: ${trio.result.score}`);
-  assert.equal(trio.result.belowThreshold, 0);
-  // The 5-function record: TLS callback + CRT string teardown added.
-  const five = latest((record) => record.metric === 'semantic' && record.requested.length === 5);
-  assert.ok(five, 'no 5-function semantic gate record for al-khaser');
-  assert.equal(five.exit, 0, 'the 5-function review must pass the 0.75 floor');
-  assert.ok(five.result.score >= 0.85, `5-function score regressed: ${five.result.score}`);
-  assert.equal(five.result.matched, 5);
-  assert.equal(five.result.belowThreshold, 0);
-  // The packed variant: ultra-brute pack -> static unpack -> 4/4 restore.
-  const ultra = latest((record) => record.metric === 'semantic' && String(record.target).includes('7zr-ultra-unpacked'));
-  assert.ok(ultra, 'no gate record for the unpacked ultra-brute image');
-  assert.equal(ultra.exit, 0);
-  assert.equal(ultra.result.matched, 4);
-  assert.ok(ultra.result.score >= 0.99, `ultra-brute unpack score: ${ultra.result.score}`);
-  // Negative controls keep discriminating on both al-khaser sets.
-  const negatives = lines.filter((record) => record.metric === 'text' && record.exit === 1);
-  assert.ok(negatives.length >= 2, 'both al-khaser negative controls must be recorded');
+  const matches = (record, target, draftPath, requested, metric, threshold) => {
+    const pathKey = (value) => String(value ?? '').replace(/\\/g, '/');
+    if (!record || pathKey(record.target) !== pathKey(target) || record.metric !== metric || record.threshold !== threshold) return false;
+    if (JSON.stringify(record.requested) !== JSON.stringify(requested)) return false;
+    if (record.draftPath !== undefined && pathKey(record.draftPath) !== pathKey(draftPath)) return false;
+    if (record.targetSha256 !== undefined && record.targetSha256 !== createHash('sha256').update(readFileSync(target)).digest('hex')) return false;
+    if (record.sourceSha256 !== undefined && record.sourceSha256 !== createHash('sha256').update(readFileSync(draftPath)).digest('hex')) return false;
+    return true;
+  };
+  const trioNames = ['FUN_140018a14', 'FUN_1400184ec', 'FUN_1400187f0'];
+  const fiveNames = [...trioNames, 'tls_callback_0', 'FUN_14000a210'];
+  const trio = latest((record) => matches(record, exe, draft, trioNames, 'semantic', 0.75));
+  assert.ok(trio, 'no exact 3-function semantic gate record for al-khaser');
+  const five = latest((record) => matches(record, exe, draft, fiveNames, 'semantic', 0.75));
+  assert.ok(five, 'no exact 5-function semantic gate record for al-khaser');
+  for (const [record, label] of [[trio, '3-function'], [five, '5-function']]) {
+    if (identityBoundPass(record, exe, draft)) {
+      assert.equal(record.exit, 0);
+      assert.ok(record.result.score >= 0.85, `${label} semantic score regressed: ${record.result.score}`);
+      assert.equal(record.result.belowThreshold, 0);
+      if (label === '5-function') assert.equal(record.result.matched, 5);
+    } else {
+      assert.equal(record.schemaVersion, undefined, `${label} legacy pin must not masquerade as fresh identity-bound evidence`);
+    }
+  }
+  const ultraTarget = join('dist', 'corpus-adv', '7zr-ultra-unpacked.exe');
+  const ultraNames = ['FUN_00401000', 'FUN_004010ac', 'FUN_0040116f', 'FUN_0040125a'];
+  const ultra = latest((record) => matches(record, ultraTarget, join('test', 'fixtures', '7zr-restored-b2.c'), ultraNames, 'semantic', 0.75));
+  assert.ok(ultra, 'no exact gate record for the unpacked ultra-brute image');
+  if (identityBoundPass(ultra, ultraTarget, join('test', 'fixtures', '7zr-restored-b2.c'))) {
+    assert.equal(ultra.exit, 0);
+    assert.equal(ultra.result.matched, 4);
+    assert.ok(ultra.result.score >= 0.99, `ultra-brute unpack score: ${ultra.result.score}`);
+  } else {
+    assert.equal(ultra.schemaVersion, undefined, 'the ultra-brute legacy pin is historical only');
+  }
+  const negatives = [
+    ...lines.filter((record) => matches(record, exe, draft, trioNames, 'text', 0.99)),
+    ...lines.filter((record) => matches(record, exe, draft, fiveNames, 'text', 0.99)),
+  ];
+  assert.equal(negatives.length, 2, 'both exact al-khaser negative controls must be recorded');
   for (const neg of negatives) {
-    assert.equal(neg.threshold, 0.99);
+    assert.equal(neg.exit, 1);
     assert.equal(neg.result.belowThreshold, neg.result.functions);
   }
-  // Export-surface record: sqlite3 requested BY EXPORT NAME through the
-  // overlay (plan §13 residual #8 closed) - 2/2 at the 0.75 floor, negative
-  // control discriminating.
-  const exportPositive = latest((record) => record.metric === 'semantic'
-    && String(record.target).includes('sqlite3.dll')
-    && Array.isArray(record.requested) && record.requested.includes('sqlite3_value_int'));
-  assert.ok(exportPositive, 'no export-name gate record for sqlite3');
-  assert.equal(exportPositive.exit, 0);
-  assert.equal(exportPositive.result.matched, 2);
-  assert.ok(exportPositive.result.score >= 0.95, `export-name score: ${exportPositive.result.score}`);
-  const exportNegative = lines.filter((record) => record.metric === 'text'
-    && String(record.target).includes('sqlite3.dll')
-    && Array.isArray(record.requested) && record.requested.includes('sqlite3_value_int'));
-  assert.ok(exportNegative.some((record) => record.exit === 1), 'the export-name negative control must be recorded');
+  const sqliteTarget = join('dist', 'corpus', 'sqlite3.dll');
+  const exportNames = ['sqlite3_value_int', 'sqlite3_stricmp'];
+  const exportDraft = join('test', 'fixtures', 'sqlite3-exports-restored.c');
+  const exportPositive = latest((record) => matches(record, sqliteTarget, exportDraft, exportNames, 'semantic', 0.75));
+  assert.ok(exportPositive, 'no exact export-name gate record for sqlite3');
+  if (identityBoundPass(exportPositive, sqliteTarget, exportDraft)) {
+    assert.equal(exportPositive.exit, 0);
+    assert.equal(exportPositive.result.matched, 2);
+    assert.ok(exportPositive.result.score >= 0.95, `export-name score: ${exportPositive.result.score}`);
+  } else {
+    assert.equal(exportPositive.schemaVersion, undefined, 'the export-name legacy pin is historical only');
+  }
+  const exportNegative = lines.filter((record) => matches(record, sqliteTarget, exportDraft, exportNames, 'text', 0.99));
+  assert.ok(exportNegative.some((record) => record.exit === 1), 'the exact export-name negative control must be recorded');
 });

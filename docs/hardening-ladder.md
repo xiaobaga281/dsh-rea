@@ -1,7 +1,7 @@
 # 加固阶梯：用不断增强的靶标测出真实缺口
 
 > 目的不是"再评审一遍"，而是把一个可复现的对抗测试跑起来：靶标逐级加固，插件逐级修补，每一级都有数字。
-> 全部数据来自本机实测，脚本见 `scripts/harden-ladder.mjs`，样本与 JSON 落在 `dist/ladder/`。
+> 全部数据来自本机实测，脚本见 `scripts/dev/harden-ladder.mjs`，样本与 JSON 落在 `dist/ladder/`。
 
 ## 1. 为什么要阶梯，而不是一次性难样本
 

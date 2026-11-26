@@ -9,7 +9,7 @@
  * It is a report, not a pass/fail unit test: a missing Ghidra document makes
  * some calls fail legitimately. Run before publishing: `npm run concurrency`.
  */
-const ROOT = new URL('../', import.meta.url);
+const ROOT = new URL('../../', import.meta.url);
 const { resolveConfig, childEnvironment } = await import(new URL('lib/infra/config.js', ROOT).href);
 const { ReaMcpClient } = await import(new URL('lib/surface/mcp-client.js', ROOT).href);
 const { classifyTool } = await import(new URL('lib/infra/artifacts.js', ROOT).href);
@@ -23,7 +23,7 @@ if (!existsSync(ENTRY)) {
   console.error(`REA runtime not found at ${ENTRY}; activate the plugin once or adjust the path.`);
   process.exit(2);
 }
-const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+const version = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
 const config = resolveConfig({});
 const client = new ReaMcpClient({
   command: process.execPath,

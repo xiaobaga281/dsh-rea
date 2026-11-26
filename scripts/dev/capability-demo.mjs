@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('../', import.meta.url);
+const ROOT = new URL('../../', import.meta.url);
 const ROOT_PATH = fileURLToPath(ROOT);
 const OUT = join(tmpdir(), 'rea-samples');
 
@@ -25,7 +25,7 @@ const { extractStrings, xorProbe, triageBuffer } = await import(new URL('lib/sta
 const { extractDeepStrings, channelSummary } = await import(new URL('lib/static/strings.js', ROOT).href);
 
 if (!existsSync(join(OUT, 'tracked_app.exe'))) {
-  await import(new URL('scripts/make-sample.mjs', ROOT).href);
+  await import(new URL('scripts/dev/make-sample.mjs', ROOT).href);
 }
 const expectations = JSON.parse(readFileSync(join(OUT, 'expectations.json'), 'utf8'));
 

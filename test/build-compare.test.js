@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { buildReadiness, compileC } from '../lib/restore/build.js';
+import { buildProcessFailure, buildReadiness, compileC } from '../lib/restore/build.js';
 import { buildInteractionTier, cfgSimilarity, classifyAgainstFunctionFloor, compareBuilds, floorFromSkeleton, functionFloorFromInventory, matchFunctionLists, measureToolchainFloor, normalizePseudocode, pseudocodeSimilarity, scoreFunctionLists, semanticSimilarity, sourceLiterals, splitByFunctionFloor, unionFunctionFloors } from '../lib/restore/compare.js';
 import { ghidraLocalReadiness, parseFunctionList } from '../lib/restore/ghidra-local.js';
-import { interactionContractFrom } from '../lib/static/interaction.js';
 import { buildCompareBuildTool } from '../lib/surface/recon-tools.js';
 import { generateSpecimen } from '../scripts/recon/specimen.mjs';
 
@@ -258,10 +258,15 @@ test('the build step reports unavailable or compiles a trivial program', async (
     if (readiness.ready) {
       assert.equal(outcome.ok, true, outcome.reason);
       assert.ok(outcome.outPath.endsWith('probe.exe'));
+      const firstBuild = await readFile(outcome.outPath);
+      assert.equal(outcome.sha256, createHash('sha256').update(firstBuild).digest('hex'));
       const floor = await measureToolchainFloor({ workDir: join(dir, 'floor') });
       assert.equal(floor.reason, null);
       assert.ok(floor.floor.imports.size > 0);
       assert.ok(floor.floor.strings.size > 0);
+      const repeated = await compileC({ sourceText: 'int main(void) { return 0; }\n', workDir: join(dir, 'work'), name: 'probe' });
+      assert.equal(repeated.ok, true, repeated.reason);
+      assert.deepEqual(await readFile(repeated.outPath), firstBuild, 'runtime evidence stays bound when the same draft is rebuilt');
     } else {
       assert.equal(outcome.code, 'unavailable');
       assert.ok(outcome.reason.length > 0);
@@ -269,6 +274,15 @@ test('the build step reports unavailable or compiles a trivial program', async (
     const badWorkDir = await compileC({ sourceText: 'int main(void) { return 0; }', workDir: 'relative/path' });
     assert.equal(badWorkDir.code, 'bad-workdir');
   });
+});
+
+test('a compiler that cannot launch is unavailable rather than a source failure', () => {
+  const failure = buildProcessFailure({ code: -1, error: Object.assign(new Error('spawn EACCES'), { code: 'EACCES' }) });
+  assert.equal(failure.ok, false);
+  assert.equal(failure.code, 'unavailable');
+  assert.match(failure.reason, /could not start.*EACCES/);
+  assert.equal(buildProcessFailure({ code: 1, stderr: 'source error' }).code, 'compile-error');
+  assert.equal(buildProcessFailure({ code: null, timedOut: true }).code, 'timeout');
 });
 
 test('the behaviour tier is opt-in and an identical rebuild scores 1.0 on it', async () => {
@@ -704,7 +718,7 @@ function zeroResourceDirectory(bytes) {
   return buffer;
 }
 
-test('a truncated engine inventory is flagged on the tier, and zero target facts read blocked', async (t) => {
+test('a one-function page size still aggregates the complete engine inventory', async (t) => {
   const builder = await buildReadiness();
   if (!builder.ready) {
     t.skip(`no build engine (${builder.reason})`);
@@ -715,35 +729,19 @@ test('a truncated engine inventory is flagged on the tier, and zero target facts
     t.skip(`no Ghidra (${ghidra.reason})`);
     return;
   }
-  await inTemp('dsh-rea-t5-cap-', async (dir) => {
-    // The R5 GUI target against itself with a 1-function cap: the inventory is
-    // truncated, the tier still scores the facts it can see, and it says so.
+  await inTemp('dsh-rea-t5-pages-', async (dir) => {
     const spec = await generateSpecimen({ tier: 'R5', outDir: dir, mutate: false });
     assert.equal(spec.ok, true, spec.build?.reason);
-    const truncated = await compareBuilds({
+    const compared = await compareBuilds({
       targetPath: spec.truth.targetPath, rebuiltPath: spec.truth.targetPath,
       engine: true, interaction: true, maxFunctions: 1, timeoutMs: 300_000,
     });
-    assert.equal(truncated.tiers.t5.status, 'ran');
-    assert.equal(truncated.tiers.t5.inventoryTruncated, true);
-    assert.match(truncated.tiers.t5.note, /truncated/);
-
-    // A console binary with the resource-directory pointer zeroed: no window
-    // imports, no resources, and a 1-function inventory that cannot reach a
-    // window procedure even if one existed. Zero target facts + truncated
-    // inventory = blocked, never a scored zero or a fake "no interaction surface".
-    const plain = await compileC({ sourceText: 'int main(void) { return 7; }\n', workDir: join(dir, 'plain'), name: 'plain' });
-    assert.equal(plain.ok, true, plain.reason);
-    const stripped = join(dir, 'plain', 'no-rsrc.exe');
-    await writeFile(stripped, zeroResourceDirectory(await readFile(plain.outPath)));
-    const blocked = await compareBuilds({
-      targetPath: stripped, rebuiltPath: stripped,
-      engine: true, interaction: true, maxFunctions: 1, timeoutMs: 300_000,
-    });
-    assert.equal(blocked.tiers.t5.status, 'blocked');
-    assert.equal(blocked.tiers.t5.score, null);
-    assert.equal(blocked.tiers.t5.inventoryTruncated, true);
-    assert.match(blocked.tiers.t5.reason, /truncated inventory surfaced no interaction facts/);
-    assert.equal(blocked.weightsUsed.t5, undefined, 'a blocked tier stays out of the weights');
+    assert.equal(compared.tiers.t2.inventoryComplete, true, JSON.stringify(compared.tiers.t2));
+    assert.equal(compared.tiers.t2.truncated, false);
+    assert.ok(compared.tiers.t2.pages > 1, 'page size is not an inventory cap');
+    assert.equal(compared.tiers.t5.status, 'ran');
+    assert.equal(compared.tiers.t5.inventoryComplete, true);
+    assert.equal(compared.tiers.t5.inventoryTruncated, false);
+    assert.equal(compared.tiers.t5.score, 1);
   });
 });

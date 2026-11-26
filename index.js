@@ -1,5 +1,5 @@
 /**
- * Host half of `dsh-rea`.
+ * Host half of `dsh-rea-restore`.
  *
  * REA (github.com/morluto/rea, npm package `rea-agents`, MIT) ships a stdio MCP
  * server (`rea mcp`) carrying a very large tool catalog - roughly 207 tools for
@@ -31,7 +31,7 @@
  * exits, the catalog is re-synced after a bounded backoff while the tools stay
  * registered (calls fail loudly meanwhile), and disposal closes the transport.
  *
- * @module dsh-rea
+ * @module dsh-rea-restore
  */
 
 import { readFileSync } from 'node:fs';
@@ -39,7 +39,8 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { classifyTool, createArtifactStore, pathOutsideScope, sessionArtifactRoot } from './lib/infra/artifacts.js';
-import { buildCorrelateSamplesTool, buildDecompileAddressTool, buildExportReportTool, buildProbeAddressTool, buildPurgeArtifactsTool, buildTriageTool } from './lib/surface/analysis-tools.js';import { childEnvironment, resolveConfig } from './lib/infra/config.js';
+import { buildCorrelateSamplesTool, buildDecompileAddressTool, buildExportReportTool, buildProbeAddressTool, buildPurgeArtifactsTool, buildTriageTool } from './lib/surface/analysis-tools.js';
+import { childEnvironment, resolveConfig } from './lib/infra/config.js';
 import { createLimiter } from './lib/dynamic/concurrency.js';
 import {
   ENGINE_ENV_OVERRIDES, applyGhidraEnvironment, detectGhidra, engineConfigSignature,
@@ -65,7 +66,7 @@ import { mountEnvironmentRoutes } from './lib/surface/routes.js';
 import { createResultIndex, snapshotMeta } from './lib/infra/result-index.js';
 import { installSkill, resolveReaPackage } from './lib/infra/runtime.js';
 import { createSchemaCache, probeFullCatalog } from './lib/infra/schema-cache.js';
-import { buildCatalogTool, buildDescribeArtifactTool, buildDoctorTool, buildReadArtifactTool, buildStatusTool, buildTool, publicToolName, textOf } from './lib/surface/tools.js';
+import { buildCatalogTool, buildDescribeArtifactTool, buildDoctorTool, buildReadArtifactTool, buildStatusTool, buildTool, createConnectionBinding, createConnectionSupervisor } from './lib/surface/tools.js';
 import { checkForUpdate, configureMirrors, installUpdate, updateStatus } from './lib/infra/update.js';
 
 /** Services this plugin needs; `tools` is the registry REA's catalog lands in. */
@@ -74,6 +75,20 @@ export const inject = ['tools', 'webServer'];
 /** How long to wait between respawns, and how many attempts before stopping. */
 const RECONNECT_DELAY_MS = 2_000;
 const RECONNECT_MAX_ATTEMPTS = 5;
+
+export const OWN_TOOL_AUDIT = Object.freeze({
+  rea_doctor: 'read', rea_catalog: 'read', rea_read_artifact: 'read', rea_describe_artifact: 'read',
+  rea_status: 'read', rea_triage: 'read', rea_correlate_samples: 'write', rea_compare_build: 'compile',
+  rea_reconstruct: 'compile', rea_dynamic_probe: 'execute', rea_trace_behavior: 'execute',
+  rea_memory_dump: 'execute', rea_side_effects: 'execute', rea_unpack: 'write',
+  rea_probe_address: 'read', rea_decompile_address: 'read', rea_export_report: 'write',
+  rea_purge_artifacts: 'write', rea_query_results: 'read', rea_batch_triage: 'write',
+  rea_diff_hint: 'read', rea_fuzz_harness: 'write', rea_run_playbook: 'execute',
+  rea_protocol_analyze: 'read', rea_windows_tools: 'read', rea_ioc_extract: 'read',
+  rea_tracking_surface: 'read', rea_anti_analysis: 'read', rea_sanitize_report: 'read',
+  rea_analyst_exposure: 'read',
+});
+const OWN_WRITE_TOOLS = new Set(Object.entries(OWN_TOOL_AUDIT).filter(([, kind]) => kind !== 'read').map(([name]) => name));
 
 const PLUGIN_VERSION = (() => {
   try {
@@ -204,11 +219,11 @@ export async function apply(ctx, rawConfig = {}) {
   const guardTool = (name, args, entry) => {
     const outside = pathOutsideScope(args, config.allowedTargets);
     if (outside) {
-      return `${name}: ${outside.key} "${outside.path}" is outside this session's allowedTargets. Add its root to the dsh-rea row if that is intended.`;
+      return `${name}: ${outside.key} "${outside.path}" is outside this session's allowedTargets. Add its root to the dsh-rea-restore row if that is intended.`;
     }
     const { mutating, destructive, inferred, external, verb } = classifyTool(name, entry);
     if (destructive && !config.allowDeviceMutations) {
-      return `${name} removes or overwrites something on the attached device and is disabled. Set "allowDeviceMutations: true" on the dsh-rea row if that is intended.`;
+      return `${name} removes or overwrites something on the attached device and is disabled. Set "allowDeviceMutations: true" on the dsh-rea-restore row if that is intended.`;
     }
     // Optional analyst-side exposure control: upstream marks 108 tools as
     // openWorld/destructive. "deny" is opt-in because it also blocks harmless
@@ -236,8 +251,7 @@ export async function apply(ctx, rawConfig = {}) {
    */
   // Execution is audited under the same policy as writes: a trace runs the sample
   // and the draft, so the call has to be attributable after the fact.
-  const OWN_WRITE_TOOLS = new Set(['rea_purge_artifacts', 'rea_export_report', 'rea_run_playbook', 'rea_trace_behavior', 'rea_memory_dump', 'rea_side_effects']);
-  const ownGuard = (name, args) => {
+  const ownGuard = async (name, args) => {
     // Same value-shape check as the bridged tools: no parameter-name whitelist,
     // so an own tool cannot become a path-scope bypass through a nested input.
     const outside = pathOutsideScope(args, config.allowedTargets, {
@@ -250,8 +264,10 @@ export async function apply(ctx, rawConfig = {}) {
     if (outside) {
       return `${name}: ${outside.key} "${outside.path}" is outside this session's allowedTargets.`;
     }
+    const auditClass = OWN_TOOL_AUDIT[name];
+    if (auditClass === undefined) return `${name}: tool has no audit classification`;
     if (OWN_WRITE_TOOLS.has(name)) {
-      void artifacts.audit({ tool: name, args: Object.keys(args ?? {}), policy: 'own-tool-write' });
+      await artifacts.audit({ tool: name, args: Object.keys(args ?? {}), policy: `own-tool-${auditClass}` });
     }
     return undefined;
   };
@@ -265,9 +281,12 @@ export async function apply(ctx, rawConfig = {}) {
         // scope check, so ownGuard authorises the real path. Order is
         // mandatory: restore → guard → execute.
         const args = restoreSensitive(rawArgs);
-        const refusal = ownGuard(definition.name, args);
+        const refusal = await ownGuard(definition.name, args);
         if (refusal) throw new Error(refusal);
         const result = await original(args, exec);
+        if (OWN_WRITE_TOOLS.has(definition.name)) {
+          await artifacts.audit({ tool: definition.name, policy: `own-tool-${OWN_TOOL_AUDIT[definition.name]}`, outcome: 'returned' });
+        }
         // Safety net for every own tool: host identity leaves redacted. The
         // execution tools already wrap themselves; this is idempotent.
         if (config.redactIdentity !== false && result !== null && typeof result === 'object') {
@@ -281,26 +300,22 @@ export async function apply(ctx, rawConfig = {}) {
     return () => { try { dispose?.(); } catch {} };
   };
 
-  ctx.effect(() => register(buildDoctorTool({ config, entry: REA_ENTRY, translate: translator(ctx) })), 'dsh-rea: doctor tool');
+  ctx.effect(() => register(buildDoctorTool({ config, entry: REA_ENTRY, translate: translator(ctx) })), 'dsh-rea-restore: doctor tool');
 
   // The discovery index, populated by the first sync and replaced on every
   // re-sync, so it always names the tools the server actually advertises.
   const catalog = { entries: () => [] };
-  ctx.effect(() => register(buildCatalogTool(catalog, schemaCache)), 'dsh-rea: catalog tool');
+  ctx.effect(() => register(buildCatalogTool(catalog, schemaCache)), 'dsh-rea-restore: catalog tool');
 
-  ctx.effect(() => register(buildReadArtifactTool(artifacts)), 'dsh-rea: artifact reader');
-  ctx.effect(() => register(buildDescribeArtifactTool(artifacts)), 'dsh-rea: binary evidence describe');
+  ctx.effect(() => register(buildReadArtifactTool(artifacts)), 'dsh-rea-restore: artifact reader');
+  ctx.effect(() => register(buildDescribeArtifactTool(artifacts)), 'dsh-rea-restore: binary evidence describe');
 
   // Declared before the status tool so it can close over the live client: the
   // tool is advertised from the first turn, while the connection may still be
   // starting, failing, or being replaced.
-  let client;
-  const clientFacade = {
-    callTool: (...args) => (client === undefined
-      ? Promise.reject(new Error('the REA child is not connected'))
-      : client.callTool(...args)),
-  };
-  ctx.effect(() => register(buildStatusTool({ client: clientFacade, engines: statusPayload, version: PLUGIN_VERSION })), 'dsh-rea: status tool');
+  const connection = createConnectionBinding();
+  const clientFacade = connection;
+  ctx.effect(() => register(buildStatusTool({ client: clientFacade, engines: statusPayload, version: PLUGIN_VERSION })), 'dsh-rea-restore: status tool');
 
   // These three do not need a live REA child: triage reads a file locally,
   // export works on a supplied bundle, and purge only touches artifact files.
@@ -321,21 +336,21 @@ export async function apply(ctx, rawConfig = {}) {
       }
     },
   };
-  ctx.effect(() => register(buildTriageTool(triageOptions)), 'dsh-rea: triage tool');
+  ctx.effect(() => register(buildTriageTool(triageOptions)), 'dsh-rea-restore: triage tool');
   // Family pivot: group a corpus by imphash / PDB GUID / Rich before anyone
   // spends a deep pass on sample number seven of the same build.
   ctx.effect(() => register(buildCorrelateSamplesTool({
     maxBytes: config.triageMaxBytes,
     limit: config.batchTriageLimit,
     store: artifacts,
-  })), 'dsh-rea: sample correlation tool');
+  })), 'dsh-rea-restore: sample correlation tool');
   // The reconstruction loop's measuring stick: rebuilt binary vs target, tier
   // by tier. Local unless the Ghidra tier is available; never executes either
   // binary.
   ctx.effect(() => register(buildCompareBuildTool({
     maxBytes: config.triageMaxBytes,
     store: artifacts,
-  })), 'dsh-rea: rebuild comparison tool');
+  })), 'dsh-rea-restore: rebuild comparison tool');
   // The loop itself: budget, convergence and terminal states are in lib/recon;
   // this tool supplies the build and the comparison and persists the state.
   ctx.effect(() => register(buildReconstructTool({
@@ -344,43 +359,43 @@ export async function apply(ctx, rawConfig = {}) {
     // Upstream analyzers are only named in gap lines when this session's
     // server actually advertises them; the getter is read at gap time.
     availableTools: () => triageOptions.availableTools,
-  })), 'dsh-rea: reconstruction loop tool');
+  })), 'dsh-rea-restore: reconstruction loop tool');
   // Opt-in sample execution. Off unless the policy says otherwise; the tool
   // also requires a per-call confirmation.
   ctx.effect(() => register(buildDynamicProbeTool({
     config,
     store: artifacts,
-  })), 'dsh-rea: dynamic probe tool');
+  })), 'dsh-rea-restore: dynamic probe tool');
   // Runtime behaviour: execute the target and the rebuild in throwaway
   // directories and compare output, exit code and files. Same opt-in policy and
   // per-call confirmation as the probe.
   ctx.effect(() => register(buildTraceBehaviorTool({
     config,
     store: artifacts,
-  })), 'dsh-rea: behaviour trace tool');
+  })), 'dsh-rea-restore: behaviour trace tool');
   // Generic dynamic unpacking: dump the mapped main module and rebuild a PE.
   // Same opt-in policy and per-call confirmation as the other execution paths.
   ctx.effect(() => register(buildMemoryDumpTool({
     config,
     store: artifacts,
-  })), 'dsh-rea: memory dump tool');
+  })), 'dsh-rea-restore: memory dump tool');
   // Side effects that never become files: registry, pipes, services, network.
   // Same opt-in policy and per-call confirmation as the other execution paths.
   ctx.effect(() => register(buildSideEffectsTool({
     config,
     store: artifacts,
-  })), 'dsh-rea: side-effect observation tool');
+  })), 'dsh-rea-restore: side-effect observation tool');
   // Static unpacking: a file transformation, not execution. UPX only.
-  ctx.effect(() => register(buildUnpackTool({ store: artifacts })), 'dsh-rea: unpack tool');
+  ctx.effect(() => register(buildUnpackTool({ store: artifacts })), 'dsh-rea-restore: unpack tool');
   // The fallback for `verify` when no analyzer can start: it reads the file
   // the report describes, so an uninstalled engine no longer makes a correct
   // plan unscorable.
-  ctx.effect(() => register(buildProbeAddressTool()), 'dsh-rea: address probe tool');
-  ctx.effect(() => register(buildDecompileAddressTool()), 'dsh-rea: decompile tool');
+  ctx.effect(() => register(buildProbeAddressTool()), 'dsh-rea-restore: address probe tool');
+  ctx.effect(() => register(buildDecompileAddressTool()), 'dsh-rea-restore: decompile tool');
 
-  ctx.effect(() => register(buildExportReportTool({ client: clientFacade, store: artifacts, toolVersion: PLUGIN_VERSION })), 'dsh-rea: export report tool');
+  ctx.effect(() => register(buildExportReportTool({ client: clientFacade, store: artifacts, toolVersion: PLUGIN_VERSION })), 'dsh-rea-restore: export report tool');
 
-  ctx.effect(() => register(buildPurgeArtifactsTool(artifacts)), 'dsh-rea: artifact purge tool');
+  ctx.effect(() => register(buildPurgeArtifactsTool(artifacts)), 'dsh-rea-restore: artifact purge tool');
 
   // Workflow layer: cross-session result index, corpus triage, local diff hints.
   for (const [definition, label] of buildWorkflowTools({
@@ -405,8 +420,8 @@ export async function apply(ctx, rawConfig = {}) {
 
   // Optional adapters. They report a missing external binary rather than
   // pretending the capability exists, so they are safe to register everywhere.
-  ctx.effect(() => register(buildProtocolTool({ store: artifacts })), 'dsh-rea: protocol adapter');
-  ctx.effect(() => register(buildWindowsToolsTool()), 'dsh-rea: windows tool probe');
+  ctx.effect(() => register(buildProtocolTool({ store: artifacts })), 'dsh-rea-restore: protocol adapter');
+  ctx.effect(() => register(buildWindowsToolsTool()), 'dsh-rea-restore: windows tool probe');
   ctx.effect(() => register(buildPlaybookTool({
     dir: config.playbookDir,
     timeoutMs: config.playbookTimeoutMs,
@@ -418,10 +433,10 @@ export async function apply(ctx, rawConfig = {}) {
     },
     toolNames: () => catalog.entries().map((entry) => entry.name),
     store: artifacts,
-  })), 'dsh-rea: playbook runner');
+  })), 'dsh-rea-restore: playbook runner');
 
   if (REA_ENTRY === undefined || !config.enabled) {
-    log.warn(`dsh-rea: ${REA_ENTRY === undefined ? 'the rea-agents runtime could not be resolved (the archive is missing or failed to unpack)' : 'disabled by config'}; no REA tools registered (rea_doctor still reports the state).`);
+    log.warn(`dsh-rea-restore: ${REA_ENTRY === undefined ? 'the rea-agents runtime could not be resolved (the archive is missing or failed to unpack)' : 'disabled by config'}; no REA tools registered (rea_doctor still reports the state).`);
     return;
   }
 
@@ -446,38 +461,37 @@ export async function apply(ctx, rawConfig = {}) {
   // The skill is installed before the connection, so a first session has both
   // halves even if the MCP handshake later fails.
   const skillPath = await installSkill({ log, skillDir: REA_SKILL_DIR, version: REA_VERSION });
-  if (skillPath !== undefined) log.info(`dsh-rea: installed the reverse-engineer-anything skill at ${skillPath}`);
+  if (skillPath !== undefined) log.info(`dsh-rea-restore: installed the reverse-engineer-anything skill at ${skillPath}`);
 
   const registry = createToolRegistry((definition) => ctx.tools.register(definition), {
     onError: (message) => log.warn(message),
   });
 
   try {
-    client = spawnChild();
-    await client.ready;
+    const initial = spawnChild();
+    let startupStderr = '';
+    try {
+      await initial.ready;
+      await connection.replace(initial);
+    } catch (error) {
+      startupStderr = initial.stderr ?? '';
+      try { await initial.dispose(); } catch {}
+      throw error;
+    }
   } catch (error) {
-    log.error(`dsh-rea: the REA MCP server did not start (${error.message}); no REA tools registered.${client?.stderr ? `\nchild stderr:\n${client.stderr}` : ''}`);
-    try { await client?.dispose(); } catch {}
+    log.error(`dsh-rea-restore: the REA MCP server did not start (${error.message}); no REA tools registered.${startupStderr ? `\nchild stderr:\n${startupStderr}` : ''}`);
     return;
   }
 
-  let syncing = false;
   const readLimiter = createLimiter(config.maxConcurrentReadTools);
-  let restarting;
-  let attempts = 0;
-  let reconnectTimer;
 
-  async function sync() {
-    const entries = await client.listTools();
-    schemaCache.prime(entries, client.serverInfo?.version ?? null);
-    externalToolCount = entries.filter((entry) => classifyTool(entry?.name ?? '', entry).external).length;
-    // Triage's next steps name only tools the server actually advertises.
-    triageOptions.availableTools = new Set(entries.map((entry) => entry?.name).filter((name) => typeof name === 'string'));
+  async function prepareCatalog(source) {
+    const entries = await source.listTools();
     const definitions = [];
     const index = [];
     for (const entry of entries) {
       if (typeof entry?.name !== 'string') continue;
-      const definition = buildTool(client, entry, config.deferCatalog, {
+      const definition = buildTool(clientFacade, entry, config.deferCatalog, {
         spill: (name, text) => artifacts.maybeSpill(name, text),
         guard: (name, args, schemaEntry) => guardTool(name, args, schemaEntry),
         limiter: readLimiter,
@@ -495,56 +509,54 @@ export async function apply(ctx, rawConfig = {}) {
         name: definition.name,
         description: typeof entry.description === 'string' ? entry.description : entry.name,
         parameters: definition.parameters,
+        ...(definition.annotations ? { annotations: definition.annotations } : {}),
+        ...(entry.outputSchema ? { outputSchema: entry.outputSchema } : {}),
+        ...(definition.deferLoading === true ? { deferLoading: true } : {}),
       });
     }
-    // The index is swapped only after the definitions exist, so a failed
-    // listing cannot leave the catalog naming tools that were not registered.
-    const result = registry.apply(definitions);
-    catalog.entries = () => index;
-    attempts = 0;
-    log.info(`dsh-rea: ${result.size} REA tools registered${config.deferCatalog ? ' (deferred)' : ''}${result.failed > 0 ? `, ${result.failed} failed` : ''}`);
+    return { definitions, index, entries };
   }
 
-  async function resync(reason) {
-    if (syncing) return;
-    syncing = true;
-    try {
-      await sync();
-    } catch (error) {
-      log.warn(`dsh-rea: tool sync failed (${reason}): ${error.message}`);
-    } finally {
-      syncing = false;
-    }
-  }
-
-  /**
-   * Replace the child, keeping the old one alive until the new one handshakes.
-   *
-   * The old implementation disposed first, so a failed restart left the plugin
-   * with no server at all; it also never re-attached supervision, which meant a
-   * child started here was never respawned again. Serialized, because two
-   * concurrent sidebar actions used to spawn two children and leak one.
-   */
-  function restart(reason) {
-    if (restarting !== undefined) return restarting;
-    restarting = (async () => {
-      const next = spawnChild();
-      try {
-        await next.ready;
-      } catch (error) {
-        try { await next.dispose(); } catch {}
-        throw error;
+  let committedCatalog = null;
+  function commitCatalog(source, prepared, generation = connection.generation) {
+    connection.assertCurrent({ client: source, generation });
+    const serverVersion = source.serverInfo?.version ?? null;
+    schemaCache.prime(prepared.entries, serverVersion);
+    externalToolCount = prepared.entries.filter((entry) => classifyTool(entry?.name ?? '', entry).external).length;
+    // Triage's next steps name only tools the server actually advertises.
+    triageOptions.availableTools = new Set(prepared.entries.map((entry) => entry?.name).filter((name) => typeof name === 'string'));
+    const result = registry.apply(prepared.definitions);
+    catalog.entries = () => prepared.index;
+    log.info(`dsh-rea-restore: ${result.size} REA tools registered${config.deferCatalog ? ' (deferred)' : ''}${result.failed > 0 ? `, ${result.failed} failed` : ''}`);
+    if (result.failed > 0) {
+      if (committedCatalog) {
+        const restored = registry.apply(committedCatalog.definitions);
+        schemaCache.prime(committedCatalog.entries, committedCatalog.serverVersion);
+        externalToolCount = committedCatalog.entries.filter((entry) => classifyTool(entry?.name ?? '', entry).external).length;
+        triageOptions.availableTools = new Set(committedCatalog.entries.map((entry) => entry?.name).filter((name) => typeof name === 'string'));
+        catalog.entries = () => committedCatalog.index;
+        if (restored.failed > 0) log.error(`dsh-rea-restore: restoring the previous catalog failed for ${restored.failed} tool(s)`);
+      } else {
+        registry.disposeAll();
+        catalog.entries = () => [];
+        triageOptions.availableTools = new Set();
+        externalToolCount = 0;
       }
-      const previous = client;
-      client = next;
-      supervise(next);
-      try { await previous?.dispose(); } catch {}
-      await resync(reason);
-      log.info(`dsh-rea: the REA child restarted (${reason})`);
-      return true;
-    })().finally(() => { restarting = undefined; });
-    return restarting;
+      throw new Error(`${result.failed} tool registration(s) failed`);
+    }
+    committedCatalog = { ...prepared, serverVersion };
+    return result;
   }
+
+  const connectionSupervisor = createConnectionSupervisor(connection, {
+    spawn: spawnChild,
+    prepare: prepareCatalog,
+    commit: commitCatalog,
+    retryDelayMs: RECONNECT_DELAY_MS,
+    maxAttempts: RECONNECT_MAX_ATTEMPTS,
+    report: (message, level = 'info') => log[level]?.(`dsh-rea-restore: ${message}`),
+  });
+  const { restart } = connectionSupervisor;
 
   if (ctx.webServer?.register) {
     const routeDispose = mountEnvironmentRoutes(ctx, {
@@ -600,14 +612,18 @@ export async function apply(ctx, rawConfig = {}) {
       },
       log,
     });
-    ctx.effect(() => routeDispose, 'dsh-rea: environment routes');
+    ctx.effect(() => routeDispose, 'dsh-rea-restore: environment routes');
   }
 
+  const initialSnapshot = connection.snapshot();
   try {
-    await sync();
+    await connectionSupervisor.sync();
   } catch (error) {
-    log.error(`dsh-rea: the first tool sync failed: ${error.message}; no REA tools registered.`);
-    try { await client.dispose(); } catch {}
+    if (connectionSupervisor.disposed || !connection.isCurrent(initialSnapshot)) return;
+    log.error(`dsh-rea-restore: the first tool sync failed: ${error.message}; no REA tools registered.`);
+    if (connection.clear(initialSnapshot.client)) {
+      try { await initialSnapshot.client?.dispose(); } catch {}
+    }
     return;
   }
 
@@ -620,56 +636,21 @@ export async function apply(ctx, rawConfig = {}) {
         const { entries: full, serverVersion } = await probeFullCatalog({
           ReaMcpClient, childEnvironment, config,
           entry: REA_ENTRY, cwd: WORKSPACE_DIR, version: PLUGIN_VERSION,
-          log: (message) => log.warn(`dsh-rea: catalog probe: ${message}`),
+          log: (message) => log.warn(`dsh-rea-restore: catalog probe: ${message}`),
         });
         const count = schemaCache.primeFull(full, serverVersion);
-        log.info(`dsh-rea: full catalog cached (${count} tools, ${Math.round(schemaCache.memoryBytes / 1024)} KB in memory, live/probe versions ${schemaCache.versionConsistent === false ? 'MISMATCH' : 'match'})`);
+        log.info(`dsh-rea-restore: full catalog cached (${count} tools, ${Math.round(schemaCache.memoryBytes / 1024)} KB in memory, live/probe versions ${schemaCache.versionConsistent === false ? 'MISMATCH' : 'match'})`);
       } catch (error) {
         schemaCache.markProbeFailed(error?.message ?? error);
-        log.warn(`dsh-rea: full catalog probe failed; rea_catalog stays compact: ${error?.message ?? error}`);
+        log.warn(`dsh-rea-restore: full catalog probe failed; rea_catalog stays compact: ${error?.message ?? error}`);
       }
     })();
   }
 
-  /**
-   * The child exiting after registration is recoverable: the tools stay listed
-   * (calls fail loudly), and a fresh child replaces this one on a bounded
-   * backoff. Giving up is logged explicitly so the remedy is visible.
-   */
-  function supervise(current) {
-    if (current.supervised === true) return;
-    current.supervised = true;
-    current.child?.on('exit', () => {
-      if (current.disposed || client !== current) return;
-      if (attempts >= RECONNECT_MAX_ATTEMPTS) {
-        log.error(`dsh-rea: the REA child kept exiting after ${RECONNECT_MAX_ATTEMPTS} attempts; reconnect stopped. Restart the session to try again.`);
-        return;
-      }
-      attempts += 1;
-      clearTimeout(reconnectTimer);
-      reconnectTimer = setTimeout(() => {
-        void (async () => {
-          try {
-            const next = spawnChild();
-            await next.ready;
-            client = next;
-            supervise(next);
-            await resync('after reconnect');
-          } catch (error) {
-            log.warn(`dsh-rea: reconnect attempt ${attempts} failed: ${error.message}`);
-          }
-        })();
-      }, RECONNECT_DELAY_MS * attempts);
-      reconnectTimer.unref?.();
-    });
-  }
-  supervise(client);
+  connectionSupervisor.supervise(connection.client);
 
   ctx.effect(() => () => {
-    clearTimeout(reconnectTimer);
+    connectionSupervisor.dispose();
     registry.disposeAll();
-    void client.dispose();
-  }, 'dsh-rea: connection');
+  }, 'dsh-rea-restore: connection');
 }
-
-export { ReaMcpClient, buildTool, childEnvironment, publicToolName, resolveConfig, textOf };

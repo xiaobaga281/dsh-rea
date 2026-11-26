@@ -15,6 +15,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
+import { parseModuleEdges } from '../scripts/gates/module-graph.mjs';
+import { structurePaths } from '../scripts/gates/update-code-structure.mjs';
+
 const ROOT = join(fileURLToPath(import.meta.url), '..', '..');
 const LIB = join(ROOT, 'lib');
 const LAYERS = ['infra', 'static', 'dynamic', 'restore', 'surface'];
@@ -41,6 +44,13 @@ function libFiles(dir) {
 const allFiles = libFiles(LIB);
 const relOf = (full) => full.slice(LIB.length + 1).replace(/\\/g, '/');
 const layerOf = (rel) => rel.split('/')[0];
+const specifiersOf = (source) => parseModuleEdges(source).edges.filter((specifier) => specifier.startsWith('.'));
+
+test('the generated structure list contains each entry exactly once', () => {
+  const paths = structurePaths(ROOT).map((file) => file.slice(ROOT.length + 1).replace(/\\/g, '/'));
+  assert.equal(new Set(paths).size, paths.length);
+  assert.equal(paths.filter((path) => path.startsWith('scripts/duel/')).length, 5);
+});
 
 test('every lib module lives in exactly one layer directory', () => {
   const strays = readdirSync(LIB).filter((name) => !LAYERS.includes(name));
@@ -57,12 +67,12 @@ test('imports stay inside the allowed dependency directions', () => {
     const rel = relOf(full);
     const layer = layerOf(rel);
     const src = readFileSync(full, 'utf8');
-    for (const match of src.matchAll(/from\s+'(\.[^']+)'/g)) {
-      const targetAbs = join(LIB, rel.split('/').slice(0, -1).join('/'), match[1]);
+    for (const specifier of specifiersOf(src)) {
+      const targetAbs = join(LIB, rel.split('/').slice(0, -1).join('/'), specifier);
       const targetRel = relOf(targetAbs);
       const targetLayer = targetRel.split('/')[0];
       if (!LAYERS.includes(targetLayer)) {
-        violations.push(`${rel} -> non-layer target ${match[1]}`);
+        violations.push(`${rel} -> non-layer target ${specifier}`);
         continue;
       }
       if (!ALLOWED[layer].includes(targetLayer)) {
@@ -80,8 +90,8 @@ test('the non-surface layers are cycle-free', () => {
     if (layerOf(rel) === 'surface') continue; // UI wiring may be interdependent
     const src = readFileSync(full, 'utf8');
     const targets = [];
-    for (const match of src.matchAll(/from\s+'(\.[^']+)'/g)) {
-      const targetAbs = join(LIB, rel.split('/').slice(0, -1).join('/'), match[1]);
+    for (const specifier of specifiersOf(src)) {
+      const targetAbs = join(LIB, rel.split('/').slice(0, -1).join('/'), specifier);
       const targetRel = relOf(targetAbs);
       if (layerOf(targetRel) !== 'surface') targets.push(targetRel);
     }

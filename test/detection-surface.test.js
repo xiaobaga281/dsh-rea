@@ -6,7 +6,7 @@
  * test/observe.test.js, test/capability-hardening.test.js and
  * test/sandbox.test.js (including the orphan + external-kill job cleanup
  * measurements), and the tool-count claim is pinned by the host-matrix README
- * claims gate (scripts/host-matrix.mjs).
+ * claims gate (scripts/gates/host-matrix.mjs).
  */
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { resolveConfig } from '../lib/infra/config.js';
+import { findDocReferences, validateDocReferences } from '../scripts/gates/doc-references.mjs';
 
 const ROOT = join(fileURLToPath(import.meta.url), '..', '..');
 const read = (relative) => readFile(join(ROOT, relative), 'utf8');
@@ -63,6 +64,18 @@ test('the detection-surface matrix exists with the baseline row and all DS rows,
   assert.match(doc, /lib\/dynamic\/sandbox\.js:\d+/);
   assert.match(doc, /UDP sendto/);
   assert.match(doc, /VMProtect/);
+});
+
+test('every code citation resolves to a real file and line range', async () => {
+  const doc = await read('docs/detection-surface.md');
+  const references = findDocReferences(doc);
+  assert.ok(references.length >= 65, `only ${references.length} citations parsed`);
+  assert.ok(references.some((ref) => ref.file === 'lib/surface/recon-tools.js'));
+  assert.ok(references.some((ref) => ref.file === 'scripts/runtime/rea-sandbox.ps1' && ref.start === 539),
+    'the :528/:539 shorthand pair must resolve to the cited file');
+  const validation = validateDocReferences(ROOT, ['docs/detection-surface.md', 'docs/reconstruction-plan.md']);
+  assert.deepEqual(validation.failures, []);
+  assert.ok(validation.checked >= 85, `only ${validation.checked} citations validated`);
 });
 
 test('wording lint: the matrix doc and the README subsection contain no absolutized claims', async () => {

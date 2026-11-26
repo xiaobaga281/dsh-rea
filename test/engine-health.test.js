@@ -103,7 +103,7 @@ test('an unavailable engine drops the probe instead of promising it', () => {
   assert.ok(step, 'the experiment is still planned');
   // 1.8.5 dropped the probe entirely. 1.8.6 keeps the claim checkable by hand:
   // the same address goes to the local structural probe, labelled as such.
-  assert.equal(step.probe.tool, 'probe_address');
+  assert.equal(step.probe.tool, 'rea_probe_address');
   assert.equal(step.probe.tier, 'local');
   assert.equal(step.probe.blockedFrom, 'ghidra');
   assert.match(step.blocked, /私有运行目录|临时目录/);

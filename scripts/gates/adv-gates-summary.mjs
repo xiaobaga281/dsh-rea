@@ -1,7 +1,7 @@
 /**
  * Summarize the function-level restoration gates across all targets.
  *
- * The gate (scripts/recon-restore.mjs) appends one machine-readable record per
+ * The gate (scripts/recon/restore.mjs) appends one machine-readable record per
  * run to dist/restore-gates.jsonl; this read-only pass turns that stream into
  * the per-target view the report needs: the latest positive and negative
  * control per target×metric, each run's score, and how many iterations the
@@ -11,7 +11,7 @@
  * every gate run against a real adversarial corpus lands in the same stream,
  * so the rate is always one command away instead of buried in prose.
  *
- * Run: node scripts/adv-gates-summary.mjs [record-path]
+ * Run: node scripts/gates/adv-gates-summary.mjs [record-path]
  *
  * Exit codes: 0 summary printed; 2 the record file is missing.
  */

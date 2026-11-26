@@ -171,6 +171,48 @@ test('intel tools produce bounded, untrusted-marked output', async () => {
   }
 });
 
+test('IOC extraction marks the string cap and never persists capped findings as complete', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'rea-intel-cap-'));
+  const sample = join(dir, 'sample.bin');
+  const noise = Array.from({ length: 4_001 }, (_, index) => `noise-${index.toString().padStart(5, '0')}`).join('\n');
+  await writeFile(sample, `${noise}\nhttps://after-cap.example/collect\n`);
+  let saved;
+  try {
+    const result = await buildIocExtractTool({
+      store: { write: async (_name, text) => { saved = JSON.parse(text); return join(dir, 'out.json'); } },
+    }).execute({ path: sample, detail: true });
+    assert.match(result.text, /extraction coverage: capped/);
+    assert.equal(saved.truncated, true);
+    assert.equal(saved.coverage.complete, false);
+    assert.equal(saved.coverage.stringCapReached, true);
+    assert.equal(saved.coverage.stringCount, 4_000);
+    assert.equal(saved.iocs.some((item) => item.value.includes('after-cap.example')), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('IOC extraction raises its cap on request and then reports the pass as complete', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'rea-intel-cap-raised-'));
+  const sample = join(dir, 'sample.bin');
+  const noise = Array.from({ length: 4_001 }, (_, index) => `noise-${index.toString().padStart(5, '0')}`).join('\n');
+  await writeFile(sample, `${noise}\nhttps://after-cap.example/collect\n`);
+  let saved;
+  try {
+    const result = await buildIocExtractTool({
+      store: { write: async (_name, text) => { saved = JSON.parse(text); return join(dir, 'out.json'); } },
+    }).execute({ path: sample, detail: true, maxStrings: 5_000 });
+    assert.match(result.text, /extraction coverage: configured pass complete/);
+    assert.equal(saved.truncated, false);
+    assert.equal(saved.coverage.complete, true);
+    assert.equal(saved.coverage.maxStrings, 5_000);
+    assert.ok(saved.coverage.stringCount > 4_000);
+    assert.equal(saved.iocs.some((item) => item.value.includes('after-cap.example')), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('diff hint reports import deltas, new network indicators and block overlap', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'rea-diff-'));
   const left = join(dir, 'old.bin');

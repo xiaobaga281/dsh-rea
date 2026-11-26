@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { classifyTool, createArtifactStore } from '../lib/infra/artifacts.js';
 import { buildTool, markUntrusted } from '../lib/surface/tools.js';
 import { toArtifactUri, toSarif } from '../lib/surface/export.js';
-import { detectAntiAnalysis, parseOtherContainers, triageBuffer } from '../lib/static/triage.js';
+import { parseOtherContainers, triageBuffer } from '../lib/static/triage.js';
 import { verifyManifestText } from '../lib/infra/manifest-signature.js';
 
 const ENTRY = { name: 'list_names', description: 'List names', inputSchema: { type: 'object', properties: {} } };
@@ -65,7 +65,7 @@ test('SARIF uses a URI and never claims an execution succeeded without evidence'
   const sarif = toSarif({ target: 'C:\\samples\\a.exe', unknowns: [{ question: 'why?' }] });
   assert.equal(sarif.runs[0].results[0].locations[0].physicalLocation.artifactLocation.uri, 'file:///C:/samples/a.exe');
   assert.equal(sarif.runs[0].invocations, undefined);
-  assert.equal(sarif.runs[0].properties['dsh-rea/untrusted-content'], true);
+  assert.equal(sarif.runs[0].properties['dsh-rea-restore/untrusted-content'], true);
   assert.equal(toSarif({}, { executionSuccessful: true }).runs[0].invocations[0].executionSuccessful, true);
 });
 

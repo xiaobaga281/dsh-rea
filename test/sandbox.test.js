@@ -23,9 +23,10 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import test from 'node:test';
 
 import { createArtifactStore } from '../lib/infra/artifacts.js';
@@ -33,11 +34,27 @@ import { compileC } from '../lib/restore/build.js';
 import { buildDynamicProbeTool } from '../lib/surface/dynamic-tools.js';
 import { buildMemoryDumpTool } from '../lib/surface/memdump-tools.js';
 import { buildSideEffectsTool } from '../lib/surface/observe-tools.js';
-import { isSandboxHarnessFile, parseSandboxDiag, pidAliveWithName, SANDBOX_LAUNCHER, startSandboxed, windowsQuoteArgument } from '../lib/dynamic/sandbox.js';
+import { isSandboxHarnessFile, parseSandboxDiag, pidAliveWithName, sandboxExecutionFailure, SANDBOX_LAUNCHER, startSandboxed, windowsQuoteArgument } from '../lib/dynamic/sandbox.js';
 import { runTrace } from '../lib/dynamic/trace.js';
 import { buildTraceBehaviorTool } from '../lib/surface/trace-tools.js';
 
 const IS_WIN = process.platform === 'win32';
+
+test('the sandbox launcher lives in the packaged runtime group', () => {
+  assert.equal(basename(SANDBOX_LAUNCHER), 'rea-sandbox.ps1');
+  assert.match(SANDBOX_LAUNCHER, /scripts[\\/]runtime[\\/]rea-sandbox\.ps1$/);
+  assert.equal(existsSync(SANDBOX_LAUNCHER), true);
+});
+
+test('sandbox execution stays fail-closed when the late outcome is missing or did not run', () => {
+  assert.equal(sandboxExecutionFailure(false, null), null);
+  assert.equal(sandboxExecutionFailure(false, { ran: false, reason: 'ignored without sandbox' }), null);
+  assert.equal(sandboxExecutionFailure(true, { ran: true }), null);
+  assert.equal(sandboxExecutionFailure(true, { ran: false, reason: 'assign-job failed' }), 'assign-job failed');
+  assert.equal(sandboxExecutionFailure(true, null), 'the sandbox did not start the sample');
+  assert.equal(sandboxExecutionFailure(true, { ran: false, reason: '' }), 'the sandbox did not start the sample');
+  assert.equal(sandboxExecutionFailure(true, { ran: false, reason: '   ' }), 'the sandbox did not start the sample');
+});
 
 // ---- measured launcher diagnostics (validation matrix, 2026-11-19) ----
 const DIAG_V1_NORMAL = [

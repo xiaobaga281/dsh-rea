@@ -192,8 +192,11 @@ test('a JDK that exists but is too old is not a ready engine', () => {
   assert.equal(ok.sufficient, true);
   assert.equal(ok.note, null);
 
-  // Unknown version is not evidence of sufficiency.
-  assert.equal(javaRequirement({ available: true, major: null }).sufficient, false);
+  // Unknown version is not evidence of sufficiency or an age measurement.
+  const unknown = javaRequirement({ available: true, major: null });
+  assert.equal(unknown.sufficient, false);
+  assert.match(unknown.note, /could not be determined/);
+  assert.doesNotMatch(unknown.note, /too old|older than/);
   assert.equal(javaRequirement({ available: false }).note, null);
 });
 

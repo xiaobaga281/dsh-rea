@@ -207,15 +207,20 @@ test('a hypothesis with no checkable prediction, or an unknown kind, stays unver
 // ---------------------------------------------------------------------------
 
 const corpus = { buffer: null, context: null };
+const realCorpusEnabled = (t) => {
+  if (process.env.DSH_REA_REAL_CORPUS === '1') return true;
+  t.skip('set DSH_REA_REAL_CORPUS=1 for explicit real-corpus validation');
+  return false;
+};
 
 test('corpus context: sqlite3.dll channels are ready', async (t) => {
+  if (!realCorpusEnabled(t)) return;
+  const target = join('dist', 'corpus', 'sqlite3.dll');
+  assert.equal(existsSync(target), true, 'dist/corpus/sqlite3.dll is required for real-corpus validation');
   const ghidra = await ghidraLocalReadiness();
-  if (!ghidra.ready) {
-    t.skip(`no Ghidra (${ghidra.reason})`);
-    return;
-  }
-  corpus.buffer = await readFile(join('dist', 'corpus', 'sqlite3.dll'));
-  const listed = await listFunctionsWithGhidra(join('dist', 'corpus', 'sqlite3.dll'), { maxFunctions: 200, timeoutMs: 300_000 });
+  assert.equal(ghidra.ready, true, `no Ghidra (${ghidra.reason})`);
+  corpus.buffer = await readFile(target);
+  const listed = await listFunctionsWithGhidra(target, { maxFunctions: 200, timeoutMs: 300_000 });
   assert.equal(listed.ok, true, listed.reason ?? 'inventory failed');
   corpus.context = {
     layout: readPeLayout(corpus.buffer),
@@ -319,11 +324,9 @@ test('a refuted hypothesis flows back as a hypothesis-refuted gap in the next it
 });
 
 test('rea_reconstruct hypothesis-record / hypothesis-check persist and decide', async (t) => {
+  if (!realCorpusEnabled(t)) return;
   const ghidra = await ghidraLocalReadiness();
-  if (!ghidra.ready) {
-    t.skip(`no Ghidra (${ghidra.reason})`);
-    return;
-  }
+  assert.equal(ghidra.ready, true, `no Ghidra (${ghidra.reason})`);
   const dir = await mkdtemp(join(tmpdir(), 'dsh-rea-hypothesis-'));
   try {
     const store = {
@@ -402,6 +405,7 @@ const loadCacheByPrefix = (prefix) => {
 };
 
 test('W4 hypothesis files: unique ids, checkable predictions, evidence quotes verbatim in the cached bodies', async (t) => {
+  if (!realCorpusEnabled(t)) return;
   const loaded = [];
   for (const file of W4_FILES) {
     if (!existsSync(file.path)) {
@@ -449,6 +453,7 @@ test('W4 hypothesis files: unique ids, checkable predictions, evidence quotes ve
 });
 
 test('W4 verdicts reproduce against the cached-inventory context: 41 verified positives, 4 refuted negatives', async (t) => {
+  if (!realCorpusEnabled(t)) return;
   const loaded = [];
   for (const file of W4_FILES) {
     if (!existsSync(file.path) || !existsSync(file.corpus)) {
@@ -494,11 +499,9 @@ test('W4 verdicts reproduce against the cached-inventory context: 41 verified po
 });
 
 test('W4 coverage fold: fixed 32-function denominator, negatives counted separately', async (t) => {
+  if (!realCorpusEnabled(t)) return;
   const mod = await import('../dist/m1-coverage.mjs').catch(() => null);
-  if (!mod) {
-    t.skip('dist/m1-coverage.mjs is not present');
-    return;
-  }
+  assert.ok(mod, 'dist/m1-coverage.mjs is required for explicit W4 validation');
   const records = [
     { target: 'dist/corpus/sqlite3.dll', hypotheses: [
       { id: 'FUN_180008750-dat', prediction: { kind: 'constant-at-rva' }, status: 'verified', sameChannel: false },

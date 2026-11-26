@@ -10,6 +10,7 @@
 import { readFileSync } from 'node:fs';
 
 import { apply } from '../../index.js';
+import { restoreSensitive } from '../../lib/infra/redact.js';
 import { TRACKING_RULES } from '../../lib/static/intel.js';
 import { APIS, BEHAVIOURS, CANARY, ENDPOINTS, IOC_TEXT, PLAN } from './truth.mjs';
 
@@ -54,7 +55,7 @@ async function call(tools, name, args) {
 function readSavedJson(text) {
   const match = String(text).match(/full JSON:\s*(.+)\s*$/m);
   if (!match) return null;
-  try { return JSON.parse(readFileSync(match[1].trim(), 'utf8')); } catch { return null; }
+  try { return JSON.parse(readFileSync(restoreSensitive(match[1].trim()), 'utf8')); } catch { return null; }
 }
 
 /** Family ids from the text report, for the run where no JSON was persisted. */

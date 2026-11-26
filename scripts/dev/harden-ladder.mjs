@@ -18,12 +18,12 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { extractDeepStrings, channelSummary } from '../lib/static/strings.js';
-import { resolveImports } from '../lib/static/api-hash.js';
+import { extractDeepStrings, channelSummary } from '../../lib/static/strings.js';
+import { resolveImports } from '../../lib/static/api-hash.js';
 import {
   antiAnalysisMatrix, analystExposure, capabilityProfile, extractIocs, parsePEImports,
   trackingSurface,
-} from '../lib/static/intel.js';
+} from '../../lib/static/intel.js';
 
 // ---------------------------------------------------------------- encoders ---
 
@@ -408,7 +408,7 @@ const report = {
   schemaVersion: 1,
   label,
   generatedAt: new Date().toISOString(),
-  toolVersion: JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version,
+  toolVersion: JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version,
   groundTruth: { tracking: EXPECTED_TRACKING, anti: EXPECTED_ANTI, ioc: EXPECTED_IOC, hidden: HIDDEN, canaries: CANARY },
   tiers: rows,
   mean: Number((rows.reduce((sum, row) => sum + row.overall, 0) / rows.length).toFixed(1)),

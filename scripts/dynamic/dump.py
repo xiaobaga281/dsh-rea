@@ -4,7 +4,7 @@ Usage:
     python dump.py <target> <raw-output> <size-of-image> <delay-ms> <timeout-ms> [wait-for-exec] [--pid N] [--tid N]
 
 Attach mode (--pid N): the target was already created suspended inside the
-kernel sandbox (scripts/rea-sandbox.ps1 -Suspend). This helper attaches to the
+kernel sandbox (scripts/runtime/rea-sandbox.ps1 -Suspend). This helper attaches to the
 existing pid, installs the kernel32 hooks before the first user-code
 instruction, and resumes the suspended main thread via --tid (Win32
 OpenThread/ResumeThread - device.resume only covers Frida-spawned processes)

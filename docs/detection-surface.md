@@ -23,7 +23,7 @@
 矩阵第一行，三种形态。目标进程不存在，目标内的反逆向检查（反调试、反注入、自校验）无从谈起——五列均为「不可观测（目标未运行）」：
 
 1. **本地静态层**（triage / intel / structure / strings / behavior 声明面 / interaction / hypothesis-check 本地通道 / compare / reconstruct）：插件进程内读字节。[代码 lib/surface/recon-tools.js:144]
-2. **Ghidra 引擎档**（`rea_compare_build` / `rea_reconstruct` 的 T2，engine 默认开 [代码 lib/surface/recon-tools.js:220/:743]）：子进程是 JVM 而非目标 [代码 lib/restore/ghidra-local.js:107-144（run 拉起的是 headless 分析器）]；目标文件仅被 `-import` 读入 Ghidra 自有 project [代码 lib/restore/ghidra-local.js:226/:234]，project 缓存按文件哈希/大小/mtime 建 [代码 lib/restore/ghidra-local.js:147-156]，不修改目标文件 → 目标侧零。
+2. **Ghidra 引擎档**（`rea_compare_build` / `rea_reconstruct` 的 T2，engine 默认开 [代码 lib/surface/recon-tools.js:220/:743]）：子进程是 JVM 而非目标 [代码 lib/restore/ghidra-local.js:107-144（run 拉起的是 headless 分析器）]；目标文件仅被 `-import` 读入 Ghidra 自有 project [代码 lib/restore/ghidra-local.js:226/:234]，project 缓存按目标内容 SHA-256 + 脚本版本 + 页大小/证据上限/预算建 [代码 lib/restore/ghidra-local.js:218-224]，不修改目标文件 → 目标侧零。
 3. **rea_unpack**（upx -d，[代码 lib/dynamic/unpack.js:86]）：`-o output` 写新文件，源文件字节不变 → 目标零执行、样本自校验基线不受影响 → 目标侧零。
 
 边界注记：「零检测面」限定**目标进程视角**。宿主侧 JVM/UPX/python 进程与文件访问对 EDR 等第三方可见（DS-5），不属本矩阵各列。
@@ -57,16 +57,16 @@
 - **令牌特殊 = 否**：宿主普通令牌 [分析]。
 - **行为差异**：输出里的目标 pid 被改写为 `[PID]` [代码 lib/dynamic/trace.js:289-292]——只影响我方读到的文本，目标自身行为不变；除上述环境值外无附加行为差异 [分析]。
 
-### DS-1' rea_trace_behavior（sandbox=true，经 scripts/rea-sandbox.ps1）
+### DS-1' rea_trace_behavior（sandbox=true，经 scripts/runtime/rea-sandbox.ps1）
 
 门禁：在 DS-1 之上另需 `sandboxSampleExecution` [代码 lib/infra/config.js:120；门禁 lib/surface/trace-tools.js:107-110]。
 
-- **目标进程存在 = 是**：挂起创建、先入 Job 再恢复 [代码 scripts/rea-sandbox.ps1:493（CREATE_SUSPENDED）与 :528/:539（AssignProcessToJobObject 先于 ResumeThread）]。
+- **目标进程存在 = 是**：挂起创建、先入 Job 再恢复 [代码 scripts/runtime/rea-sandbox.ps1:493（CREATE_SUSPENDED）与 :528/:539（AssignProcessToJobObject 先于 ResumeThread）]。
 - **被注入 = 否**：无 Frida agent [分析]。
 - **被调试通道 = 不触发**：同 DS-1 [分析，未实测]。
-- **环境异样 = 是**：launcher 侧同 DS-1 的 env 遮蔽 [代码 scripts/rea-sandbox.ps1:257-263] + profile 重定向 [代码 scripts/rea-sandbox.ps1:254-256]；`-Desktop` 时另加专用 desktop [代码 scripts/rea-sandbox.ps1:414]，`GetThreadDesktop` 类检查可察觉差异 [分析，未实测]。
-- **令牌特殊 = 是**：无能力 AppContainer——`NtCreateLowBoxToken` 显式建令牌 [代码 scripts/rea-sandbox.ps1:481]；实测子进程报 `TokenIsAppContainer=1`、完整性级别 0x1000 (Low) [实测引用 test/sandbox.test.js「a sample runs to completion」断言 `token is-app-container=1` / `integrity-rid=0x1000`]。宿主普通令牌看不到这一切换，`IsProcessInJob` 成员在 job 内成立 [实测引用 test/sandbox.test.js job 树测试]。
-- **Job（2026-11-20 修复后状态）**：`KILL_ON_JOB_CLOSE` 现已实际赋值生效 [代码 scripts/rea-sandbox.ps1:445]；launcher 退出前若 job 内仍有孤儿孙进程先终止整个 job 并打 diag 标记 [代码 scripts/rea-sandbox.ps1:563-568]；**外杀 launcher（taskkill 仅杀 launcher、不带 /T）实测 job 内样本在 5s 断言窗口内被内核回收** [实测引用 test/sandbox.test.js「killing the launcher externally」2026-11-20，整测 2.3s]。禁 breakaway 成立：`CREATE_BREAKAWAY_FROM_JOB` 实测被拒 err=5 [实测引用 test/sandbox.test.js job 树测试]。勘误注记：2026-11-19 的「外杀 launcher 时 KILL_ON_JOB_CLOSE 不可靠」记录归因有误——`LimitFlags` 此前从未赋值，被测量的机制根本没有启用（launcher 缺陷而非 OS 行为）；修复前复现实测孤儿 leaf 在 launcher 退出后存活至自身心跳结束、修复后 5s 内回收 [实测引用 test/sandbox.test.js orphan 测试红→绿记录，plan §13 条目 11]。
+- **环境异样 = 是**：launcher 侧同 DS-1 的 env 遮蔽 [代码 scripts/runtime/rea-sandbox.ps1:257-263] + profile 重定向 [代码 scripts/runtime/rea-sandbox.ps1:254-256]；`-Desktop` 时另加专用 desktop [代码 scripts/runtime/rea-sandbox.ps1:414]，`GetThreadDesktop` 类检查可察觉差异 [分析，未实测]。
+- **令牌特殊 = 是**：无能力 AppContainer——`NtCreateLowBoxToken` 显式建令牌 [代码 scripts/runtime/rea-sandbox.ps1:481]；实测子进程报 `TokenIsAppContainer=1`、完整性级别 0x1000 (Low) [实测引用 test/sandbox.test.js「a sample runs to completion」断言 `token is-app-container=1` / `integrity-rid=0x1000`]。宿主普通令牌看不到这一切换，`IsProcessInJob` 成员在 job 内成立 [实测引用 test/sandbox.test.js job 树测试]。
+- **Job（2026-11-20 修复后状态）**：`KILL_ON_JOB_CLOSE` 现已实际赋值生效 [代码 scripts/runtime/rea-sandbox.ps1:445]；launcher 退出前若 job 内仍有孤儿孙进程先终止整个 job 并打 diag 标记 [代码 scripts/runtime/rea-sandbox.ps1:563-568]；**外杀 launcher（taskkill 仅杀 launcher、不带 /T）实测 job 内样本在 5s 断言窗口内被内核回收** [实测引用 test/sandbox.test.js「killing the launcher externally」2026-11-20，整测 2.3s]。禁 breakaway 成立：`CREATE_BREAKAWAY_FROM_JOB` 实测被拒 err=5 [实测引用 test/sandbox.test.js job 树测试]。勘误注记：2026-11-19 的「外杀 launcher 时 KILL_ON_JOB_CLOSE 不可靠」记录归因有误——`LimitFlags` 此前从未赋值，被测量的机制根本没有启用（launcher 缺陷而非 OS 行为）；修复前复现实测孤儿 leaf 在 launcher 退出后存活至自身心跳结束、修复后 5s 内回收 [实测引用 test/sandbox.test.js orphan 测试红→绿记录，plan §13 条目 11]。
 - **行为差异 = 是（内核级）**：非回环 connect 得 `WSAEACCES 10013`（0ms）[实测引用 test/sandbox.test.js kernel deny 测试]；回环默认亦拒（CheckNetIsolation 豁免需管理员，实测 err=5）[实测引用 同测试]；UDP sendto 不被拦（已声明盲区）。**方向性结论（显式入档）**：sandbox 对「静默」是**更显眼**而非更隐蔽——令牌、网络、桌面都是硬异常；它的价值是宿主防护（containment），与目标侧可观测性是两个正交维度，不得混写。
 
 ### DS-2 rea_dynamic_probe
@@ -110,7 +110,7 @@
 
 目标进程视角之外。**目标侧反逆向机制看不见这些**（目标未运行，或进程内无此类痕迹），但宿主 EDR / 审计可见：
 
-- sandbox 启动链：powershell.exe 进程、icacls（workdir 完整性级别）[代码 scripts/rea-sandbox.ps1 SetLowIntegrity 经 icacls.exe /setintegritylevel]、CheckNetIsolation LoopbackExempt 尝试 [代码 scripts/rea-sandbox.ps1:331]、CreateAppContainerProfile [代码 scripts/rea-sandbox.ps1:364/:368] / DeleteAppContainerProfile [代码 scripts/rea-sandbox.ps1:367/:580]、专用 desktop 创建 [代码 scripts/rea-sandbox.ps1:414]。
+- sandbox 启动链：powershell.exe 进程、icacls（workdir 完整性级别）[代码 scripts/runtime/rea-sandbox.ps1 SetLowIntegrity 经 icacls.exe /setintegritylevel]、CheckNetIsolation LoopbackExempt 尝试 [代码 scripts/runtime/rea-sandbox.ps1:331]、CreateAppContainerProfile [代码 scripts/runtime/rea-sandbox.ps1:364/:368] / DeleteAppContainerProfile [代码 scripts/runtime/rea-sandbox.ps1:367/:580]、专用 desktop 创建 [代码 scripts/runtime/rea-sandbox.ps1:414]。
 - 引擎与工具链：Ghidra JVM（`-import` 读入自有 project）、upx、python/Frida 进程 [代码 lib/restore/ghidra-local.js:107-144、lib/dynamic/unpack.js:86、lib/dynamic/dynamic.js:117-126]。
 - 四条执行路径的 Frida 注入对宿主可见（python 进程 + 目标进程内 agent 线程）[分析]。
 

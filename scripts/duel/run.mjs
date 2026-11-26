@@ -15,9 +15,9 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-import { buildGeneration, GENERATION_IDS } from './duel/defender.mjs';
-import { attack, loadTools } from './duel/attacker.mjs';
-import { scoreAll } from './duel/score.mjs';
+import { buildGeneration, GENERATION_IDS } from './defender.mjs';
+import { attack, loadTools } from './attacker.mjs';
+import { scoreAll } from './score.mjs';
 
 const out = process.argv.includes('--out') ? process.argv[process.argv.indexOf('--out') + 1] : join('dist', 'duel');
 const label = process.argv.includes('--label') ? process.argv[process.argv.indexOf('--label') + 1] : 'run';
@@ -55,7 +55,7 @@ const report = {
   schemaVersion: 2,
   label,
   generatedAt: new Date().toISOString(),
-  toolVersion: JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version,
+  toolVersion: JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version,
   ceiling,
   baselineNoise,
   generations: scored,

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,7 +7,7 @@ import test from 'node:test';
 
 import { createArtifactStore } from '../lib/infra/artifacts.js';
 import { buildReadiness, compileC } from '../lib/restore/build.js';
-import { compareTraces, runTrace, snapshotFiles } from '../lib/dynamic/trace.js';
+import { compareTraces, runTrace } from '../lib/dynamic/trace.js';
 import { buildTraceBehaviorTool } from '../lib/surface/trace-tools.js';
 
 const sourceThatWrites = [
@@ -79,6 +79,43 @@ test('the trace tool refuses without the policy flag or the per-call confirmatio
     const missing = await enabled.execute({ target: join(dir, 'missing-a.exe'), rebuilt: join(dir, 'missing-b.exe'), confirm: true });
     assert.match(missing.text, /does not exist|cannot be started|must be an absolute path/);
     assert.ok(!existsSync(join(dir, 'missing-a.exe')));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a sandbox launch failure stops after the target and cannot produce a success receipt', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-rea-trace-sandbox-fail-'));
+  try {
+    const target = join(dir, 'target.exe');
+    const rebuilt = join(dir, 'rebuilt.exe');
+    await writeFile(target, 'MZ target fixture');
+    await writeFile(rebuilt, 'MZ rebuilt fixture');
+    const calls = [];
+    let evidenceWrites = 0;
+    const store = {
+      statePath: () => join(dir, 'state.json'),
+      write: async () => { throw new Error('a failed trace must not be persisted as a success'); },
+      writeEvidence: async () => { evidenceWrites += 1; },
+    };
+    const tool = buildTraceBehaviorTool({
+      config: { allowSampleExecution: true, sandboxSampleExecution: true },
+      store,
+      run: async (input) => {
+        calls.push(input);
+        return {
+          ok: false, reason: 'sandbox launch failed: assign-job', exitCode: null,
+          timedOut: false, durationMs: 1, stdout: '', stderr: '', files: [],
+          sandbox: { enabled: true, ran: false, jobEnforced: false },
+        };
+      },
+    });
+    const result = await tool.execute({ target, rebuilt, confirm: true, sandbox: true });
+    assert.equal(calls.length, 1, 'the rebuilt binary must not run after the target failed to start');
+    assert.equal(calls[0].sandbox, true);
+    assert.match(result.text, /sandbox launch failed/);
+    assert.doesNotMatch(result.text, /evidenceId:|receipt:/);
+    assert.equal(evidenceWrites, 0);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

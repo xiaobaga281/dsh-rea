@@ -9,7 +9,7 @@ resumed for `duration-ms` and killed.
 
 Attach mode (--pid N, with the sandbox launcher): the sample was already
 created suspended inside the kernel sandbox (AppContainer + Job Object) by
-scripts/rea-sandbox.ps1, which passed -Suspend. This helper attaches to the
+scripts/runtime/rea-sandbox.ps1, which passed -Suspend. This helper attaches to the
 existing pid, installs the same hooks BEFORE the first user-code instruction,
 then resumes the suspended main thread via --tid (Win32 OpenThread/ResumeThread
 - device.resume only covers Frida-spawned processes) and cleans the child up

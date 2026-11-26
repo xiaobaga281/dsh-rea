@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
-  detectPackers, entropyProfile, extractStrings, identifyFormat, parsePE,
+  detectPackers, entropyProfile, extractStrings, identifyFormat, packingControl, parsePE,
   shannonEntropy, triageBuffer, triageFile, xorProbe,
 } from '../lib/static/triage.js';
 
@@ -61,6 +61,14 @@ test('the word COMPRESS is not an MPRESS signature', () => {
   assert.equal(detectPackers(genuine).length, 0);
   const packed = Buffer.from('MZ' + '\0'.repeat(100) + '.MPRESS1\0' + '\0'.repeat(100));
   assert.equal(detectPackers(packed)[0].family, 'MPRESS');
+});
+
+test('packing controls distinguish a verified negative from an unsupported packer', () => {
+  assert.equal(packingControl(detectPackers(Buffer.from('COMPRESSED DATA'))).status, 'verified-negative');
+  assert.equal(packingControl(detectPackers(Buffer.from('UPX0'))).status, 'upx-detected');
+  const mpress = packingControl(detectPackers(Buffer.from('.MPRESS1')));
+  assert.equal(mpress.status, 'unsupported-packer');
+  assert.match(mpress.detail, /MPRESS/);
 });
 
 test('a plain file reports no packer', () => {
